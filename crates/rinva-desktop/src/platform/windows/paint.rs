@@ -120,8 +120,52 @@ pub struct SceneView<'a> {
     pub text: &'a str,
     pub background: Option<&'a Bitmap>,
     pub portrait: Option<&'a Bitmap>,
+    pub sprites: &'a [SpriteImage],
     pub ended: bool,
     pub end_text: &'a str,
+}
+pub struct SpriteImage {
+    pub image: Bitmap,
+    pub name: String,
+    pub placement: rinva_core::Sprite,
+}
+impl SpriteImage {
+    unsafe fn draw(&self, dc: HDC, rect: RECT, speaker: &str) {
+        let p = &self.placement;
+        let h = (rect.bottom - rect.top) as f32 * p.scale as f32 / 100.;
+        let w = h * self.image.width as f32 / self.image.height as f32;
+        let x = rect.left as f32 + (rect.right - rect.left) as f32 * p.x as f32 / 100. - w / 2.;
+        let y = rect.top as f32 + (rect.bottom - rect.top) as f32 * p.y as f32 / 100. - h;
+        let source = CreateCompatibleDC(dc);
+        if source.is_null() {
+            return;
+        }
+        let old = SelectObject(source, self.image.handle);
+        AlphaBlend(
+            dc,
+            x as i32,
+            y as i32,
+            w as i32,
+            h as i32,
+            source,
+            0,
+            0,
+            self.image.width,
+            self.image.height,
+            BLENDFUNCTION {
+                BlendOp: AC_SRC_OVER as u8,
+                BlendFlags: 0,
+                SourceConstantAlpha: if speaker.is_empty() || speaker == self.name {
+                    255
+                } else {
+                    160
+                },
+                AlphaFormat: AC_SRC_ALPHA as u8,
+            },
+        );
+        SelectObject(source, old);
+        DeleteDC(source);
+    }
 }
 
 pub unsafe fn scene(
@@ -168,6 +212,12 @@ pub unsafe fn scene(
     if let Some(image) = view.portrait {
         image.draw(dc, rect, true);
     }
+    let state = SaveDC(dc);
+    IntersectClipRect(dc, rect.left, rect.top, rect.right, rect.bottom);
+    for sprite in view.sprites {
+        sprite.draw(dc, rect, view.speaker);
+    }
+    RestoreDC(dc, state);
     let margin = (20. * scale) as i32;
     let panel_h = (h * 43 / 100).max((100. * scale) as i32).min(h);
     let panel = RECT {

@@ -1,4 +1,4 @@
-use crate::{storage, Field, Issue, Project, Scene, Severity, FORMAT_VERSION};
+use crate::{storage, Field, Issue, NodeKind, Project, Scene, Severity, FORMAT_VERSION};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
@@ -43,8 +43,153 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
         error(None, Field::Project, "Стартовая сцена не найдена.".into());
     }
     let mut ids = HashSet::new();
+    for name in project.variables.keys() {
+        if name.trim().is_empty() || name.chars().count() > 64 {
+            error(
+                None,
+                Field::Logic,
+                "Имя переменной должно содержать от 1 до 64 символов.".into(),
+            );
+        }
+    }
+    let mut characters = HashSet::new();
+    for character in &project.characters {
+        if character.id.is_empty()
+            || !characters.insert(&character.id)
+            || character.name.trim().is_empty()
+        {
+            error(
+                None,
+                Field::Characters,
+                "У персонажа должно быть уникальное имя и идентификатор.".into(),
+            );
+        }
+        let mut expressions = HashSet::new();
+        for expression in &character.expressions {
+            if expression.id.is_empty()
+                || !expressions.insert(&expression.id)
+                || expression.name.trim().is_empty()
+            {
+                error(
+                    None,
+                    Field::Characters,
+                    "У эмоции должно быть имя и уникальный идентификатор.".into(),
+                );
+            }
+        }
+    }
     for scene in &project.scenes {
         let id = Some(scene.id.clone());
+        if scene.kind == NodeKind::Condition && scene.condition.is_none() {
+            error(id.clone(), Field::Logic, "Настройте условие.".into());
+        }
+        if scene.kind == NodeKind::SetVariable && scene.assignment.is_none() {
+            error(
+                id.clone(),
+                Field::Logic,
+                "Настройте изменение переменной.".into(),
+            );
+        }
+        if matches!(
+            scene.kind,
+            NodeKind::Condition | NodeKind::SetVariable | NodeKind::Music
+        ) && scene.next.is_none()
+        {
+            error(
+                id.clone(),
+                Field::NextScene,
+                "Соедините выход узла со следующей сценой.".into(),
+            );
+        }
+        if scene.kind == NodeKind::Condition
+            && scene
+                .otherwise
+                .as_ref()
+                .is_none_or(|target| !index.contains_key(target.as_str()))
+        {
+            error(
+                id.clone(),
+                Field::Logic,
+                "Укажите переход для ложного условия.".into(),
+            );
+        }
+        for name in scene
+            .condition
+            .iter()
+            .map(|c| &c.variable)
+            .chain(scene.assignment.iter().map(|a| &a.variable))
+            .chain(
+                scene
+                    .choices
+                    .iter()
+                    .filter_map(|c| c.condition.as_ref().map(|c| &c.variable)),
+            )
+        {
+            if !project.variables.contains_key(name) {
+                error(
+                    id.clone(),
+                    Field::Logic,
+                    format!("Переменная не найдена: {name}"),
+                );
+            }
+        }
+        if scene.kind == NodeKind::Choice && scene.choices.is_empty() {
+            error(
+                id.clone(),
+                Field::Logic,
+                "Добавьте варианты ответа в узел выбора.".into(),
+            );
+        }
+        if scene.kind.interactive()
+            && !scene.choices.is_empty()
+            && scene.choices.iter().all(|c| c.condition.is_some())
+        {
+            error(
+                id.clone(),
+                Field::Logic,
+                "Оставьте хотя бы один ответ без условия.".into(),
+            );
+        }
+        if let Some(audio) = &scene.audio {
+            if audio.volume > 100
+                || audio.fade_ms > 10_000
+                || audio.stop_music && audio.music.is_some()
+            {
+                error(
+                    id.clone(),
+                    Field::Audio,
+                    "Проверьте громкость и переход музыки.".into(),
+                );
+            }
+        }
+        for sprite in &scene.sprites {
+            if !project.characters.iter().any(|c| {
+                c.id == sprite.character && c.expressions.iter().any(|e| e.id == sprite.expression)
+            }) {
+                error(
+                    id.clone(),
+                    Field::Characters,
+                    "Персонаж или эмоция не найдены.".into(),
+                );
+            }
+            if !(-50..=150).contains(&sprite.x)
+                || !(-50..=150).contains(&sprite.y)
+                || !(10..=300).contains(&sprite.scale)
+            {
+                error(
+                    id.clone(),
+                    Field::Characters,
+                    "Позиция персонажа: от −50 до 150%; масштаб: от 10 до 300%.".into(),
+                );
+            }
+        }
+        if scene.sprites.len() > 16 {
+            error(
+                id.clone(),
+                Field::Characters,
+                "В сцене допускается до 16 персонажей.".into(),
+            );
+        }
         if scene.id.trim().is_empty() || !ids.insert(&scene.id) {
             error(
                 id.clone(),
@@ -59,7 +204,12 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
                 "Введите название сцены.".into(),
             );
         }
-        for (i, line) in scene.lines.iter().enumerate() {
+        for (i, line) in scene
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|_| scene.kind.interactive())
+        {
             if line.text.trim().is_empty() {
                 error(
                     id.clone(),
@@ -75,7 +225,12 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
                 );
             }
         }
-        for (i, choice) in scene.choices.iter().enumerate() {
+        for (i, choice) in scene
+            .choices
+            .iter()
+            .enumerate()
+            .filter(|_| scene.kind.interactive())
+        {
             if choice.text.trim().is_empty() {
                 error(
                     id.clone(),
@@ -102,7 +257,7 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
                     format!("Переход из «{}» ведёт в отсутствующую сцену.", scene.name),
                 );
             }
-            if !scene.choices.is_empty() {
+            if scene.kind.interactive() && !scene.choices.is_empty() {
                 error(
                     id.clone(),
                     Field::NextScene,
@@ -142,7 +297,11 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
             let Some(scene) = index.get(id) else {
                 break false;
             };
-            if !scene.lines.is_empty() || !scene.choices.is_empty() {
+            if scene.kind == NodeKind::Condition
+                || scene.kind == NodeKind::End
+                || (scene.kind.interactive()
+                    && (!scene.lines.is_empty() || !scene.choices.is_empty()))
+            {
                 break false;
             }
             if !seen.insert(id) {
@@ -170,7 +329,13 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
         }
         if let Some(scene) = index.get(id) {
             // Match playback: choices take precedence over automatic transitions.
-            if scene.choices.is_empty() {
+            if scene.kind == NodeKind::End {
+                continue;
+            }
+            if scene.kind == NodeKind::Condition {
+                pending.extend(scene.otherwise.iter().map(String::as_str));
+            }
+            if !scene.kind.interactive() || scene.choices.is_empty() {
                 pending.extend(scene.next.iter().map(String::as_str));
             } else {
                 pending.extend(scene.choices.iter().map(|choice| choice.target.as_str()));
@@ -187,6 +352,18 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
             });
         }
     }
+    for (scene_id, field, path) in project.asset_references() {
+        if !storage::is_safe_asset_path(path)
+            && !matches!(field, Field::Background | Field::Portrait)
+        {
+            issues.push(Issue {
+                severity: Severity::Error,
+                scene_id,
+                field,
+                message: format!("Недопустимый путь к ресурсу: {path}"),
+            });
+        }
+    }
     issues
 }
 
@@ -195,28 +372,20 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
 pub fn inspect_project(project: &Project, root: &Path) -> Vec<Issue> {
     let mut issues = validate(project);
     let mut assets = HashMap::new();
-    for scene in &project.scenes {
-        for (field, path) in [
-            (Field::Background, &scene.background),
-            (Field::Portrait, &scene.portrait),
-        ] {
-            let Some(path) = path else {
-                continue;
-            };
-            if !storage::is_safe_asset_path(path) {
-                continue;
-            }
-            let result = assets
-                .entry(path)
-                .or_insert_with(|| storage::resolve_asset(root, path));
-            if let Err(error) = result {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    scene_id: Some(scene.id.clone()),
-                    field,
-                    message: format!("Не удалось открыть изображение {path}.\n{error}"),
-                });
-            }
+    for (scene_id, field, path) in project.asset_references() {
+        if !storage::is_safe_asset_path(path) {
+            continue;
+        }
+        let result = assets
+            .entry(path)
+            .or_insert_with(|| storage::resolve_asset(root, path));
+        if let Err(error) = result {
+            issues.push(Issue {
+                severity: Severity::Error,
+                scene_id,
+                field,
+                message: format!("Не удалось открыть изображение {path}.\n{error}"),
+            });
         }
     }
     issues.sort_by_key(|i| if i.severity == Severity::Error { 0 } else { 1 });

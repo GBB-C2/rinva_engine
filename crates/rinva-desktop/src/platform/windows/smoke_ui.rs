@@ -351,6 +351,7 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         a.document.change(|p| {
             p.scenes[0].lines = (0..45)
                 .map(|n| Line {
+                    voice: None,
                     speaker: format!("Speaker {n}"),
                     text: if n == 0 {
                         (1..=70)

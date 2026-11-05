@@ -122,8 +122,7 @@ pub unsafe fn layout(app: &App, w: i32, h: i32) {
     ] {
         app.controls.show(id, false);
     }
-    let x = 248;
-    let width = w - 580;
+    let (x, _, width, _) = app.panel_geometry(w);
     for (id, left, top, width, height) in [
         (QUERY, x, 128, width - 94, 32),
         (CLEAR, x + width - 86, 128, 86, 32),
@@ -157,6 +156,9 @@ fn field_name(app: &App, field: Field) -> String {
         Field::NextScene => app.t("После сцены").into(),
         Field::Background => app.t("Фон").into(),
         Field::Portrait => app.t("Персонаж").into(),
+        Field::Logic => app.t("Логика").into(),
+        Field::Audio => app.t("Звук").into(),
+        Field::Characters => app.t("Персонажи").into(),
     }
 }
 fn location(app: &App, key: &Key) -> String {
@@ -479,6 +481,7 @@ unsafe fn activate(app: &mut App, leave: bool) {
     app.graph.selected_port = None;
     app.selected_item = 0;
     app.choices_tab = false;
+    app.studio.pane = studio::Pane::Text;
     let control = match row.key.field {
         Field::Project => START_SCENE,
         Field::ProjectTitle => PROJECT_TITLE,
@@ -504,6 +507,18 @@ unsafe fn activate(app: &mut App, leave: bool) {
         Field::NextScene => NEXT_SCENE,
         Field::Background => BACKGROUND,
         Field::Portrait => PORTRAIT,
+        Field::Logic => {
+            app.studio.pane = studio::Pane::Logic;
+            studio::KIND
+        }
+        Field::Audio => {
+            app.studio.pane = studio::Pane::Audio;
+            studio::MUSIC_FILE
+        }
+        Field::Characters => {
+            app.studio.pane = studio::Pane::Characters;
+            studio::CHARACTERS
+        }
     };
     if leave {
         app.navigation.mode = None;

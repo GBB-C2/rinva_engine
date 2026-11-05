@@ -107,22 +107,35 @@ pub fn resolve_asset(root: &Path, relative: &str) -> Result<PathBuf, String> {
 
 pub fn assets(project: &Project) -> BTreeSet<&str> {
     project
-        .scenes
-        .iter()
-        .flat_map(|scene| [&scene.background, &scene.portrait])
-        .flatten()
-        .map(String::as_str)
+        .asset_references()
+        .into_iter()
+        .map(|(_, _, path)| path)
         .collect()
 }
 
 pub fn import_asset(root: &Path, source: &Path) -> Result<String, String> {
+    import_file(root, source, false)
+}
+pub fn import_audio(root: &Path, source: &Path) -> Result<String, String> {
+    import_file(root, source, true)
+}
+fn import_file(root: &Path, source: &Path, audio: bool) -> Result<String, String> {
     let ext = source
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg") {
-        return Err("Выберите PNG или JPEG.".into());
+    if if audio {
+        !matches!(ext.as_str(), "wav" | "mp3" | "m4a" | "flac")
+    } else {
+        !matches!(ext.as_str(), "png" | "jpg" | "jpeg")
+    } {
+        return Err(if audio {
+            "Выберите WAV, MP3, M4A или FLAC."
+        } else {
+            "Выберите PNG или JPEG."
+        }
+        .into());
     }
     if fs::metadata(source).map_err(|e| e.to_string())?.len() > MAX_ASSET_BYTES {
         return Err("Изображение слишком большое (максимум 32 МБ).".into());
@@ -137,7 +150,12 @@ pub fn import_asset(root: &Path, source: &Path) -> Result<String, String> {
     {
         return Err("Папка assets находится за пределами проекта.".into());
     }
-    let relative = format!("assets/image-{}.{}", unique_suffix(), ext);
+    let relative = format!(
+        "assets/{}-{}.{}",
+        if audio { "audio" } else { "image" },
+        unique_suffix(),
+        ext
+    );
     let mut target = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
