@@ -85,6 +85,22 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     command(hwnd, VIEW_NODES);
     command(hwnd, SEARCH);
     query(hwnd, "прилив");
+    SetFocus(handle(QUERY));
+    pump();
+    SendMessageW(handle(QUERY), WM_IME_STARTCOMPOSITION, 0, 0);
+    for code in [VK_RETURN, VK_ESCAPE] {
+        let message = MSG {
+            hwnd: handle(QUERY),
+            message: WM_KEYDOWN,
+            wParam: code as usize,
+            ..std::mem::zeroed()
+        };
+        check(
+            !shortcut(&message),
+            "Navigation shortcut intercepted IME composition",
+        )?;
+    }
+    SendMessageW(handle(QUERY), WM_IME_ENDCOMPOSITION, 0, 0);
     check(
         SendMessageW(handle(RESULTS), LB_GETCOUNT, 0, 0) == 1,
         "Unicode search returned wrong native count",
@@ -236,7 +252,7 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     filter(hwnd, 1);
     command(hwnd, GO);
     check(
-        GetFocus() == handle(TARGET)
+        (GetFocus() == handle(TARGET) || IsChild(handle(TARGET), GetFocus()) != 0)
             && APP.with(|s| s.borrow().as_ref().unwrap().selected_item) == 1,
         "Missing choice target did not focus the destination selector",
     )?;

@@ -219,5 +219,6 @@ pub fn inspect_project(project: &Project, root: &Path) -> Vec<Issue> {
             }
         }
     }
+    issues.sort_by_key(|i| if i.severity == Severity::Error { 0 } else { 1 });
     issues
 }

@@ -2092,6 +2092,10 @@ unsafe fn shortcut(message: &MSG) -> bool {
     if message.message != WM_KEYDOWN {
         return false;
     }
+    // Enter/Escape belong to the native IME while its composition is active.
+    if ui::composing(GetFocus()) {
+        return false;
+    }
     let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
     let shift = GetKeyState(VK_SHIFT as i32) < 0;
     let key = message.wParam as u16;

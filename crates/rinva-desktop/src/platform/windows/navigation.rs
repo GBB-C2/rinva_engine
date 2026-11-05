@@ -453,6 +453,10 @@ unsafe fn activate(app: &mut App, leave: bool) {
     else {
         return;
     };
+    smoke_trace(&format!(
+        "navigate {:?} {:?} leave={leave}",
+        row.key.scene_id, row.key.field
+    ));
     if search::field_text(
         &app.document.project,
         row.key.scene_id.as_deref(),
@@ -517,6 +521,13 @@ unsafe fn activate(app: &mut App, leave: bool) {
         }
         let handle = app.controls.get(control);
         SetFocus(handle);
+        smoke_trace(&format!(
+            "navigation focus control={control} actual={} parent={} scene={} item={}",
+            GetDlgCtrlID(GetFocus()),
+            GetDlgCtrlID(GetParent(GetFocus())),
+            app.selected_scene,
+            app.selected_item
+        ));
         if let Some(range) = row
             .key
             .range
