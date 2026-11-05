@@ -279,14 +279,14 @@ impl App {
             place(ADVANCE, w - 194, h - 64, 162, 32);
         } else {
             for (id, x, width) in [
-                (NEW, 234, 62),
-                (OPEN, 304, 74),
-                (SAVE, 386, 92),
-                (SAVE_AS, 486, 116),
-                (UNDO, 614, 66),
-                (REDO, 688, 66),
-                (THEME, 766, 70),
-                (EXPORT, 844, 86),
+                (NEW, 222, 62),
+                (OPEN, 292, 74),
+                (SAVE, 374, 92),
+                (SAVE_AS, 474, 116),
+                (UNDO, 594, 76),
+                (REDO, 678, 72),
+                (THEME, 758, 70),
+                (EXPORT, 836, 86),
             ] {
                 place(id, x, 20, width, 32);
             }
@@ -1112,7 +1112,7 @@ impl App {
             RECT {
                 left: px(128),
                 top: px(24),
-                right: px(226),
+                right: px(216),
                 bottom: px(47),
             },
             self.palette.muted,
@@ -1315,7 +1315,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         WM_GETMINMAXINFO => {
             let info = &mut *(l as *mut MINMAXINFO);
             let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.;
-            info.ptMinTrackSize.x = (1100. * scale) as i32;
+            info.ptMinTrackSize.x = (1120. * scale) as i32;
             info.ptMinTrackSize.y = (760. * scale) as i32;
             0
         }
