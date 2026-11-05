@@ -1,0 +1,5 @@
+/target/
+*.rinva.tmp-*
+*.rinva.bak
+*.rinva.autosave
+/smoke-output/

@@ -1,0 +1,60 @@
+name: Rust and native Windows
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked --workspace
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo run --locked -p rinva-desktop -- --validate examples/first-light.rinva
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo test --locked --workspace
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo build --locked --release -p rinva-desktop
+      - name: Native smoke test
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath target/release/rinva.exe -ArgumentList '--smoke-test', 'smoke-output' -PassThru
+          if (-not $process.WaitForExit(90000)) {
+            $process.Kill()
+            throw 'Native smoke test timed out'
+          }
+          if ($process.ExitCode -ne 0) { throw "Native smoke failed: $($process.ExitCode)" }
+          Get-Content smoke-output/native-smoke.txt
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/Rinva -Force
+          Copy-Item target/release/rinva.exe, README.md, LICENSE -Destination dist/Rinva
+          Copy-Item examples -Destination dist/Rinva -Recurse
+          Copy-Item docs -Destination dist/Rinva -Recurse
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-smoke
+          path: smoke-output
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rinva-windows-x64
+          path: dist/Rinva
