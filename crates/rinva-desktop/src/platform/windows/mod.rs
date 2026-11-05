@@ -1,4 +1,5 @@
 mod paint;
+mod recovery;
 mod ui;
 
 use rinva_core::{storage, Choice, Document, Frame, Line, Player, Project, Severity};
@@ -100,6 +101,12 @@ struct App {
     dark: bool,
     document: Document,
     file: Option<PathBuf>,
+    asset_root: PathBuf,
+    source_signature: Option<String>,
+    recovery: Option<recovery::Session>,
+    recovered_source: Option<PathBuf>,
+    autosaved_project: Option<Project>,
+    autosave_at: std::time::Instant,
     selected_scene: usize,
     selected_item: usize,
     choices_tab: bool,
@@ -126,6 +133,25 @@ impl App {
         file: Option<PathBuf>,
         player_only: bool,
     ) -> Result<Self, String> {
+        let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+        let file = file.map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            }
+        });
+        let asset_root = file
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf)
+            .unwrap_or(cwd);
+        let source_signature = file.as_ref().map(|_| project.signature());
+        let recovery = if player_only {
+            None
+        } else {
+            Some(recovery::Session::new(&settings_dir().join("recovery"))?)
+        };
         let scale = GetDpiForWindow(hwnd) as f32 / 96.;
         let dark = storage::read_json::<Settings>(&settings_dir().join("settings.json"))
             .map(|s| s.dark)
@@ -209,6 +235,12 @@ impl App {
             dark,
             document: Document::new(project),
             file,
+            asset_root,
+            source_signature,
+            recovery,
+            recovered_source: None,
+            autosaved_project: None,
+            autosave_at: std::time::Instant::now(),
             selected_scene: 0,
             selected_item: 0,
             choices_tab: false,
@@ -222,11 +254,100 @@ impl App {
         })
     }
     fn root(&self) -> PathBuf {
-        self.file
-            .as_ref()
-            .and_then(|path| path.parent())
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        self.asset_root.clone()
+    }
+
+    unsafe fn recover_previous(&mut self) -> Result<(), String> {
+        for (path, snapshot) in
+            recovery::candidates(&settings_dir().join("recovery"), self.file.as_deref())
+        {
+            let answer=ui::message(self.hwnd,"Восстановить работу?",&format!(
+                "Найдена автокопия новеллы «{}».\n\nДа — восстановить правки.\nНет — удалить эту автокопию.\nОтмена — открыть редактор без восстановления.",snapshot.project.title),MB_YESNOCANCEL|MB_ICONQUESTION);
+            match answer {
+                IDYES => {
+                    let source = snapshot.unchanged_source();
+                    let conflict = snapshot.source_path.is_some() && source.is_none();
+                    self.file = source;
+                    self.asset_root = snapshot.asset_root;
+                    self.source_signature = if conflict {
+                        None
+                    } else {
+                        snapshot.source_signature
+                    };
+                    self.document = Document::from_unsaved(snapshot.project);
+                    self.recovered_source = Some(path);
+                    self.status=if conflict{"Правки восстановлены. Исходный файл изменился: сохраните новеллу под новым именем."}else{"Правки восстановлены из автокопии. Ctrl+S — сохранить проект."}.into();
+                    self.start_autosave();
+                    return Ok(());
+                }
+                IDNO => rinva_core::recovery::remove(&path)?,
+                _ => break,
+            }
+        }
+        Ok(())
+    }
+
+    fn start_autosave(&mut self) {
+        if !self.document.dirty() || self.autosaved_project.as_ref() == Some(&self.document.project)
+        {
+            return;
+        }
+        if let Some(session) = &mut self.recovery {
+            if session.busy() {
+                return;
+            }
+            session.start(rinva_core::recovery::Snapshot::new(
+                session.id.clone(),
+                self.document.project.clone(),
+                self.file.clone(),
+                self.source_signature.clone(),
+                self.asset_root.clone(),
+            ));
+            self.autosave_at = std::time::Instant::now();
+        }
+    }
+
+    unsafe fn autosave_tick(&mut self) {
+        if let Some(result) = self.recovery.as_mut().and_then(recovery::Session::poll) {
+            match result {
+                Ok(snapshot) => {
+                    self.autosaved_project = Some(snapshot.project);
+                    if let Some(old) = self.recovered_source.take() {
+                        if let Err(error) = rinva_core::recovery::remove(&old) {
+                            self.recovered_source = Some(old);
+                            self.status =
+                                format!("Автокопия готова, но старая копия осталась: {error}");
+                            self.update_title();
+                            return;
+                        }
+                    }
+                    self.status =
+                        "Автокопия сохранена · Ctrl+S — записать изменения в проект".into();
+                }
+                Err(error) => {
+                    self.status = format!(
+                        "Автосохранение не удалось: {error}. Сохраните проект через Ctrl+S."
+                    )
+                }
+            }
+            self.update_title();
+        }
+        if self.autosave_at.elapsed() >= std::time::Duration::from_secs(15) {
+            self.start_autosave();
+        }
+    }
+
+    fn clear_recovery(&mut self) -> Result<(), String> {
+        if let Some(session) = &mut self.recovery {
+            session.clear()?;
+        }
+        if let Some(path) = &self.recovered_source {
+            rinva_core::recovery::remove(path)?;
+            self.recovered_source = None;
+        }
+        self.autosaved_project = None;
+        self.autosave_at = std::time::Instant::now();
+        Ok(())
     }
     fn scene(&self) -> &rinva_core::Scene {
         &self.document.project.scenes[self.selected_scene]
@@ -279,14 +400,14 @@ impl App {
             place(ADVANCE, w - 194, h - 64, 162, 32);
         } else {
             for (id, x, width) in [
-                (NEW, 234, 62),
-                (OPEN, 304, 74),
-                (SAVE, 386, 92),
-                (SAVE_AS, 486, 116),
-                (UNDO, 614, 66),
-                (REDO, 688, 66),
-                (THEME, 766, 70),
-                (EXPORT, 844, 86),
+                (NEW, 222, 62),
+                (OPEN, 292, 74),
+                (SAVE, 374, 92),
+                (SAVE_AS, 474, 116),
+                (UNDO, 594, 76),
+                (REDO, 678, 72),
+                (THEME, 758, 70),
+                (EXPORT, 836, 86),
             ] {
                 place(id, x, 20, width, 32);
             }
@@ -673,9 +794,14 @@ impl App {
             storage::copy_assets(&self.document.project, &self.root(), root)?;
         }
         storage::write_json(&path, &self.document.project)?;
+        self.asset_root = root.to_path_buf();
         self.file = Some(path);
+        self.source_signature = Some(self.document.project.signature());
         self.document.mark_saved();
         self.status = "Проект сохранён.".into();
+        if let Err(error) = self.clear_recovery() {
+            self.status = format!("Проект сохранён. Не удалось убрать старую автокопию: {error}");
+        }
         self.update_title();
         Ok(true)
     }
@@ -725,8 +851,11 @@ impl App {
         match id {
             NEW => {
                 if self.may_replace()? {
+                    self.clear_recovery()?;
                     self.document = Document::new(Project::new());
                     self.file = None;
+                    self.asset_root = std::env::current_dir().map_err(|e| e.to_string())?;
+                    self.source_signature = None;
                     self.selected_scene = 0;
                     self.selected_item = 0;
                     self.status = "Новая новелла. Начните с названия и первой реплики.".into();
@@ -738,6 +867,12 @@ impl App {
                         ui::file_dialog(self.hwnd, false, false, "", "Открыть новеллу")?
                     {
                         let project = storage::read_project(&path)?;
+                        self.clear_recovery()?;
+                        self.asset_root = path
+                            .parent()
+                            .ok_or("Не удалось определить папку проекта.")?
+                            .to_path_buf();
+                        self.source_signature = Some(project.signature());
                         self.document = Document::new(project);
                         self.file = Some(path);
                         self.selected_scene = 0;
@@ -752,8 +887,24 @@ impl App {
             SAVE_AS => {
                 self.save(true)?;
             }
-            UNDO => self.document.undo(),
-            REDO => self.document.redo(),
+            UNDO => {
+                self.document.undo();
+                self.status = if self.document.dirty() {
+                    "Изменение отменено · есть несохранённые правки."
+                } else {
+                    "Все правки отменены."
+                }
+                .into();
+            }
+            REDO => {
+                self.document.redo();
+                self.status = if self.document.dirty() {
+                    "Изменение повторено · Ctrl+S — сохранить."
+                } else {
+                    "Изменение повторено."
+                }
+                .into();
+            }
             THEME => {
                 self.dark = !self.dark;
                 self.palette = Palette::new(self.dark);
@@ -1112,7 +1263,7 @@ impl App {
             RECT {
                 left: px(128),
                 top: px(24),
-                right: px(226),
+                right: px(216),
                 bottom: px(47),
             },
             self.palette.muted,
@@ -1315,7 +1466,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         WM_GETMINMAXINFO => {
             let info = &mut *(l as *mut MINMAXINFO);
             let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.;
-            info.ptMinTrackSize.x = (1100. * scale) as i32;
+            info.ptMinTrackSize.x = (1120. * scale) as i32;
             info.ptMinTrackSize.y = (760. * scale) as i32;
             0
         }
@@ -1398,6 +1549,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         }),
         WM_TIMER => {
             APP.with(|slot|if let Ok(mut slot)=slot.try_borrow_mut(){if let Some(app)=slot.as_mut(){
+            app.autosave_tick();
             if let Some(result)=app.export_result.as_ref().and_then(|rx|rx.try_recv().ok()){
                 app.export_result=None;
                 match result {Ok(path)=>{app.status=format!("Сборка готова: {}",path.display());ui::message(hwnd,"Сборка готова",&format!("Папка: {}\n\nЗапустите RinvaPlayer.exe. Для передачи игры скопируйте всю папку.",path.display()),MB_OK|MB_ICONINFORMATION);},Err(error)=>{app.status=error.clone();ui::message(hwnd,"Не удалось собрать новеллу",&error,MB_OK|MB_ICONERROR);}}
@@ -1425,7 +1577,19 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                         }
                         return app.player_only
                             || match app.may_replace() {
-                                Ok(value) => value,
+                                Ok(value) => {
+                                    if value {
+                                        if let Err(error) = app.clear_recovery() {
+                                            ui::message(
+                                                hwnd,
+                                                "Не удалось убрать автокопию",
+                                                &error,
+                                                MB_OK | MB_ICONWARNING,
+                                            );
+                                        }
+                                    }
+                                    value
+                                }
                                 Err(error) => {
                                     ui::message(
                                         hwnd,
@@ -1619,7 +1783,10 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         if hwnd.is_null() {
             return Err(std::io::Error::last_os_error().to_string());
         }
-        let app = App::new(hwnd, project, file, play)?;
+        let mut app = App::new(hwnd, project, file, play)?;
+        if !play && !smoke {
+            app.recover_previous()?;
+        }
         APP.with(|slot| *slot.borrow_mut() = Some(app));
         APP.with(|slot| slot.borrow_mut().as_mut().unwrap().refresh());
         ShowWindow(hwnd, SW_SHOW);
@@ -1695,6 +1862,52 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     if !equal {
         return Err("Native undo/redo failed".into());
     }
+    APP.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let app = slot.as_mut().unwrap();
+        app.selected_scene = 0;
+        app.selected_item = 0;
+        app.refresh();
+    });
+    pump();
+    let speaker = APP.with(|slot| slot.borrow().as_ref().unwrap().controls.get(SPEAKER));
+    SetFocus(speaker);
+    pump();
+    SetWindowTextW(speaker, wide("Проверка ввода — 海").as_ptr());
+    pump();
+    if APP.with(|slot| {
+        slot.borrow().as_ref().unwrap().document.project.scenes[0].lines[0]
+            .speaker
+            .clone()
+    }) != "Проверка ввода — 海"
+    {
+        return Err("Native Unicode editing notification failed".into());
+    }
+    APP.with(|slot| -> Result<(), String> {
+        let mut slot = slot.borrow_mut();
+        let app = slot.as_mut().unwrap();
+        app.autosave_at = std::time::Instant::now() - std::time::Duration::from_secs(16);
+        app.autosave_tick();
+        let session = app.recovery.as_mut().ok_or("Recovery session missing")?;
+        session.finish().ok_or("Timer did not start autosave")??;
+        let saved = rinva_core::recovery::read(&session.path)?;
+        if saved.project != app.document.project || saved.source_path.is_some() {
+            return Err("Untitled-document autosave failed".into());
+        }
+        app.clear_recovery()?;
+        Ok(())
+    })?;
+    recovery::smoke(&output.join("recovery-sessions"))?;
+    SetFocus(hwnd);
+    pump();
+    command(UNDO);
+    if APP.with(|slot| slot.borrow().as_ref().unwrap().document.project.clone()) != original {
+        return Err("Native text session undo failed".into());
+    }
+    let original_dark = APP.with(|slot| slot.borrow().as_ref().unwrap().dark);
+    if !original_dark {
+        command(THEME);
+    }
     command(THEME);
     UpdateWindow(hwnd);
     pump();
@@ -1703,6 +1916,17 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     UpdateWindow(hwnd);
     pump();
     paint::capture(hwnd, &output.join("editor-dark.png"))?;
+    command(TAB_CHOICES);
+    let target = APP.with(|slot| slot.borrow().as_ref().unwrap().controls.get(TARGET));
+    SendMessageW(target, CB_SHOWDROPDOWN, 1, 0);
+    pump();
+    paint::capture(hwnd, &output.join("choices-dropdown.png"))?;
+    SendMessageW(target, CB_SHOWDROPDOWN, 0, 0);
+    pump();
+    if APP.with(|slot| slot.borrow().as_ref().unwrap().document.project.clone()) != original {
+        return Err("Dismissing a dropdown changed the document".into());
+    }
+    command(TAB_LINES);
     command(PLAY);
     command(ADVANCE);
     command(ADVANCE);
@@ -1732,6 +1956,10 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     if storage::read_project(&path)? != original {
         return Err("Native project roundtrip failed".into());
     }
-    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, scene command, undo/redo, live theme switch, playback choice and rollback, project roundtrip, screenshots.\n").map_err(|e|e.to_string())?;
+    if !original_dark {
+        command(THEME);
+    }
+    APP.with(|slot| slot.borrow_mut().as_mut().unwrap().clear_recovery())?;
+    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, Unicode edit notifications and grouped undo, scene command, undo/redo, dropdown dismissal, live theme switch, playback choice and rollback, project roundtrip, timer-driven background autosave, live-session isolation, crash recovery, backup fallback, asynchronous discard, screenshots.\n").map_err(|e|e.to_string())?;
     Ok(())
 }

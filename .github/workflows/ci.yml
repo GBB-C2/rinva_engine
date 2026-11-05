@@ -3,10 +3,17 @@ name: Rust and native Windows
 on:
   push:
     branches: [main, 'codex/**']
+    paths-ignore: ['docs/screenshots/**', 'README.md', 'docs/QA.md', 'docs/ROADMAP.md']
   pull_request:
+    paths-ignore: ['docs/screenshots/**', 'README.md', 'docs/QA.md', 'docs/ROADMAP.md']
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: rinva-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   core:
@@ -23,6 +30,7 @@ jobs:
 
   windows:
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
