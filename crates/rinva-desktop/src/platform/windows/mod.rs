@@ -1025,8 +1025,17 @@ impl App {
         {
             return Ok(());
         }
-        if matches!(id, TARGET | NEXT_SCENE | LANGUAGE) && notification as u32 != CBN_SELCHANGE {
-            return Ok(());
+        if matches!(id, TARGET | NEXT_SCENE | LANGUAGE) {
+            match notification as u32 {
+                CBN_SELENDCANCEL => {
+                    self.refresh();
+                    return Ok(());
+                }
+                CBN_SELENDOK => {}
+                CBN_SELCHANGE
+                    if SendMessageW(self.controls.get(id), CB_GETDROPPEDSTATE, 0, 0) == 0 => {}
+                _ => return Ok(()),
+            }
         }
         self.graph.cancel();
         if GetCapture() == self.controls.get(CANVAS) {

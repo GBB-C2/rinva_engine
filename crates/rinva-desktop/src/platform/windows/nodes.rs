@@ -411,8 +411,11 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                         VK_UP => p.y -= step,
                         _ => p.y += step,
                     }
-                    app.document
-                        .change(|project| project.scenes[i].node_position = Some(p.position()));
+                    let layout = graph::positions(&app.document.project);
+                    app.document.change(|project| {
+                        graph::freeze_positions(project, &layout);
+                        project.scenes[i].node_position = Some(p.position());
+                    });
                     app.status = "Положение узлов изменено · Ctrl+S — сохранить".into();
                     app.refresh();
                 }

@@ -53,6 +53,7 @@ jobs:
           }
           if ($process.ExitCode -ne 0) { Get-Content smoke-output/native-error.txt -ErrorAction SilentlyContinue; throw "Native smoke failed: $($process.ExitCode)" }
           Get-Content smoke-output/native-smoke.txt
+          if (Select-String -Path smoke-output/native-trace.txt -Pattern 'RUNAWAY' -Quiet) { throw 'Native message loop did not settle' }
       - name: Package
         shell: pwsh
         run: |
