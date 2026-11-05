@@ -2339,10 +2339,12 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     UpdateWindow(hwnd);
     pump();
     paint::capture(hwnd, &output.join("editor-light.png"))?;
+    smoke_ui::verify_preview_capture(hwnd, &output.join("editor-light.png"))?;
     command(THEME);
     UpdateWindow(hwnd);
     pump();
     paint::capture(hwnd, &output.join("editor-dark.png"))?;
+    smoke_ui::verify_preview_capture(hwnd, &output.join("editor-dark.png"))?;
     command(TAB_CHOICES);
     let target = APP.with(|slot| slot.borrow().as_ref().unwrap().controls.get(TARGET));
     SendMessageW(target, CB_SHOWDROPDOWN, 1, 0);

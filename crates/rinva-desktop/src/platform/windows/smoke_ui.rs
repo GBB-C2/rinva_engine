@@ -20,6 +20,36 @@ fn check(ok: bool, message: &str) -> Result<(), String> {
 fn packed(x: i32, y: i32) -> isize {
     ((x as u16 as u32) | ((y as u16 as u32) << 16)) as isize
 }
+/// A screenshot must contain rendered content, not just the controls' backgrounds.
+/// Check real child client rectangles after theme changes; story text remains native.
+pub unsafe fn verify_preview_capture(hwnd: HWND, path: &Path) -> Result<(), String> {
+    let image = image::open(path).map_err(|e| e.to_string())?.into_rgb8();
+    for id in [CANVAS, BODY] {
+        let child = handle(id);
+        let mut rect: RECT = std::mem::zeroed();
+        GetClientRect(child, &mut rect);
+        let mut origin = POINT { x: 0, y: 0 };
+        ClientToScreen(child, &mut origin);
+        ScreenToClient(hwnd, &mut origin);
+        let mut colors = std::collections::BTreeSet::new();
+        for y in 10..rect.bottom.saturating_sub(10) {
+            for x in 10..rect.right.saturating_sub(10) {
+                let (x, y) = ((origin.x + x) as u32, (origin.y + y) as u32);
+                if x < image.width() && y < image.height() {
+                    colors.insert(image.get_pixel(x, y).0);
+                }
+            }
+        }
+        check(
+            colors.len() > 12,
+            &format!("Screenshot omitted content of control {id}"),
+        )?;
+    }
+    check(
+        ui::window_text(handle(BODY)) == project().scenes[0].lines[0].text,
+        "Theme change altered native dialogue text",
+    )
+}
 unsafe fn pointer(hwnd: HWND, msg: u32, point: Point) {
     let scale = APP.with(|s| s.borrow().as_ref().unwrap().scale);
     SendMessageW(
