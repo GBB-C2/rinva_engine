@@ -267,6 +267,55 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     )?;
     command(hwnd, UNDO);
     check(project() == original, "Arrange undo failed")?;
+    // Structural edits must not leave a port selected on a different scene or choice.
+    let from = node_point(0, Some(Port::Choice(1)));
+    pointer(canvas, WM_LBUTTONDOWN, from);
+    pointer(canvas, WM_LBUTTONUP, from);
+    command(hwnd, UP);
+    check(
+        APP.with(|s| s.borrow().as_ref().unwrap().graph.selected_port)
+            == Some((0, Port::Choice(0))),
+        "Choice reorder did not move its selected port",
+    )?;
+    command(hwnd, UNDO);
+    command(hwnd, ADD_ITEM);
+    check(
+        APP.with(|s| s.borrow().as_ref().unwrap().graph.selected_port)
+            == Some((0, Port::Choice(2))),
+        "New choice did not select its port",
+    )?;
+    command(hwnd, DELETE_ITEM);
+    check(
+        APP.with(|s| s.borrow().as_ref().unwrap().graph.selected_port.is_none()),
+        "Deleted choice left a stale selected port",
+    )?;
+    command(hwnd, UNDO);
+    command(hwnd, UNDO);
+    let from = node_point(0, Some(Port::Choice(0)));
+    pointer(canvas, WM_LBUTTONDOWN, from);
+    pointer(canvas, WM_LBUTTONUP, from);
+    command(hwnd, DUP_SCENE);
+    check(
+        APP.with(|s| {
+            let s = s.borrow();
+            let a = s.as_ref().unwrap();
+            a.graph.selected_port.is_none() && a.selected_scene == original.scenes.len()
+        }),
+        "Duplicating a scene retained another scene's selected port",
+    )?;
+    command(hwnd, UNDO);
+    APP.with(|s| {
+        let mut s = s.borrow_mut();
+        let a = s.as_mut().unwrap();
+        a.selected_scene = 0;
+        a.selected_item = 0;
+        a.refresh();
+    });
+    pump();
+    check(
+        project() == original,
+        "Structural graph edits did not undo cleanly",
+    )?;
     command(hwnd, ZOOM_IN);
     command(hwnd, ZOOM_OUT);
     command(hwnd, GRAPH_FIT);

@@ -1097,6 +1097,7 @@ impl App {
             }
             UNDO => {
                 self.document.undo();
+                self.graph.selected_port = None;
                 self.status = if self.document.dirty() {
                     "Изменение отменено · есть несохранённые правки."
                 } else {
@@ -1106,6 +1107,7 @@ impl App {
             }
             REDO => {
                 self.document.redo();
+                self.graph.selected_port = None;
                 self.status = if self.document.dirty() {
                     "Изменение повторено · Ctrl+S — сохранить."
                 } else {
@@ -1209,6 +1211,7 @@ impl App {
                     project.scenes.push(copy);
                 });
                 self.selected_scene = self.document.project.scenes.len() - 1;
+                self.graph.selected_port = None;
                 self.selected_item = 0;
             }
             DELETE_SCENE => {
@@ -1220,6 +1223,7 @@ impl App {
                 ) == IDYES
                 {
                     self.document.delete_scene(index)?;
+                    self.graph.selected_port = None;
                     self.selected_scene = index.saturating_sub(1);
                     self.selected_item = 0;
                 }
@@ -1229,10 +1233,12 @@ impl App {
                 .change(|p| p.start_scene = p.scenes[index].id.clone()),
             TAB_LINES => {
                 self.choices_tab = false;
+                self.graph.selected_port = None;
                 self.selected_item = 0;
             }
             TAB_CHOICES => {
                 self.choices_tab = true;
+                self.graph.selected_port = None;
                 self.selected_item = 0;
             }
             ADD_ITEM => {
@@ -1269,6 +1275,8 @@ impl App {
                 } else {
                     self.scene().lines.len() - 1
                 };
+                self.graph.selected_port =
+                    choices.then_some((index, Port::Choice(self.selected_item)));
             }
             DELETE_ITEM => {
                 let choices = self.choices_tab;
@@ -1283,6 +1291,7 @@ impl App {
                     }
                 });
                 self.selected_item = item.saturating_sub(1);
+                self.graph.selected_port = None;
             }
             UP | DOWN => {
                 let choices = self.choices_tab;
@@ -1305,6 +1314,7 @@ impl App {
                         }
                     });
                     self.selected_item = other;
+                    self.graph.selected_port = choices.then_some((index, Port::Choice(other)));
                 }
             }
             TARGET => {
