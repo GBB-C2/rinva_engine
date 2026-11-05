@@ -274,12 +274,39 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     check(project() == before, "Group preview mutated the document")?;
     pointer(CANVAS, WM_LBUTTONUP, finish);
     let after = project();
+    let before_positions = graph::positions(&before);
+    let after_positions = graph::positions(&after);
+    // A first drag freezes the generated layout, including stationary nodes.
+    // Compare their actual positions rather than the optional serialized field.
     check(
-        after.scenes[0].node_position != before.scenes[0].node_position
-            && after.scenes[4].node_position != before.scenes[4].node_position
-            && after.scenes[1] == before.scenes[1],
+        before_positions
+            .iter()
+            .zip(&after_positions)
+            .enumerate()
+            .all(|(n, (old, new))| {
+                if matches!(n, 0 | 4) {
+                    old != new
+                } else {
+                    old == new
+                }
+            }),
         "Group drag moved the wrong nodes",
     )?;
+    let delta = |n: usize| {
+        Point::new(
+            after_positions[n].x - before_positions[n].x,
+            after_positions[n].y - before_positions[n].y,
+        )
+    };
+    check(
+        delta(0) == delta(4),
+        "Group drag changed relative positions",
+    )?;
+    let mut content = after;
+    for (scene, previous) in content.scenes.iter_mut().zip(&before.scenes) {
+        scene.node_position = previous.node_position;
+    }
+    check(content == before, "Group drag changed story content")?;
     command(hwnd, UNDO);
     check(project() == before, "Group drag was not one undo step")?;
     let old_pan = APP.with(|s| s.borrow().as_ref().unwrap().graph.pan);
