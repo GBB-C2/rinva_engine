@@ -8,5 +8,5 @@ pub mod recovery;
 pub mod storage;
 
 pub use document::Document;
-pub use model::{Choice, Issue, Line, Project, Scene, Severity, FORMAT_VERSION};
+pub use model::{Choice, Issue, Line, NodePosition, Project, Scene, Severity, FORMAT_VERSION};
 pub use player::{Frame, Player, SaveGame};

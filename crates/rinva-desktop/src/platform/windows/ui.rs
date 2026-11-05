@@ -1,5 +1,7 @@
 //! Small Win32 adapters. All HWNDs are borrowed from the UI thread; Windows owns
 //! child controls. GDI objects created here are owned and released by `Resources`.
+use super::scroll;
+use crate::i18n::Language;
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -10,9 +12,9 @@ use windows_sys::Win32::{
     Graphics::{Dwm::*, Gdi::*},
     System::{LibraryLoader::*, SystemServices::SS_LEFT},
     UI::{
-        Controls::{Dialogs::*, EM_SETLIMITTEXT, WM_MOUSELEAVE},
+        Controls::{Dialogs::*, *},
         Input::KeyboardAndMouse::*,
-        Shell::{DefSubclassProc, SetWindowSubclass},
+        Shell::{DefSubclassProc, GetWindowSubclass, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::*,
     },
 };
@@ -71,7 +73,7 @@ pub struct Resources {
     pub surface_brush: HBRUSH,
 }
 impl Resources {
-    pub unsafe fn new(scale: f32, palette: Palette) -> Self {
+    pub unsafe fn new(scale: f32, palette: Palette, language: Language) -> Self {
         let font = |size: f32, weight: u32| {
             CreateFontW(
                 -(size * scale).round() as i32,
@@ -87,7 +89,7 @@ impl Resources {
                 CLIP_DEFAULT_PRECIS as u32,
                 CLEARTYPE_QUALITY as u32,
                 DEFAULT_PITCH as u32,
-                wide("Segoe UI").as_ptr(),
+                wide(super::fonts::family(language)).as_ptr(),
             )
         };
         Self {
@@ -119,11 +121,17 @@ impl Drop for Resources {
 
 pub struct Controls {
     pub handles: BTreeMap<u16, HWND>,
+    pub scrolls: BTreeMap<u16, scroll::Bar>,
+    pub palette: Palette,
+    pub scale: f32,
 }
 impl Controls {
-    pub fn new() -> Self {
+    pub fn new(palette: Palette, scale: f32) -> Self {
         Self {
             handles: BTreeMap::new(),
+            scrolls: BTreeMap::new(),
+            palette,
+            scale,
         }
     }
     pub fn get(&self, id: u16) -> HWND {
@@ -160,6 +168,18 @@ impl Controls {
         }
         SendMessageW(handle, WM_SETFONT, font as usize, 0);
         self.handles.insert(id, handle);
+        if class == "EDIT" || class == "LISTBOX" {
+            let data = Box::into_raw(Box::new(FieldStyle {
+                palette: self.palette,
+                scale: self.scale,
+                list: class == "LISTBOX",
+                multiline: style & ES_MULTILINE as u32 != 0,
+            }));
+            if SetWindowSubclass(handle, Some(field_proc), 2, data as usize) == 0 {
+                drop(Box::from_raw(data));
+                return Err("Could not style native field".into());
+            }
+        }
         Ok(())
     }
     pub unsafe fn button(
@@ -199,11 +219,28 @@ impl Controls {
         let style = WS_TABSTOP
             | WS_BORDER
             | if multiline {
-                ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_WANTRETURN as u32 | WS_VSCROLL
+                ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_WANTRETURN as u32
             } else {
                 ES_AUTOHSCROLL as u32
             };
         self.add(parent, id, "EDIT", "", style, font)?;
+        SendMessageW(
+            self.get(id),
+            EM_SETMARGINS,
+            (EC_LEFTMARGIN | EC_RIGHTMARGIN) as usize,
+            8 | (8 << 16),
+        );
+        if multiline {
+            let bar = scroll::attach(
+                parent,
+                self.get(id),
+                false,
+                id + 1000,
+                self.palette,
+                self.scale,
+            )?;
+            self.scrolls.insert(id, bar);
+        }
         SendMessageW(
             self.get(id),
             EM_SETLIMITTEXT,
@@ -219,13 +256,23 @@ impl Controls {
             "LISTBOX",
             "",
             WS_TABSTOP
-                | WS_VSCROLL
                 | LBS_NOTIFY as u32
+                | LBS_DISABLENOSCROLL as u32
                 | LBS_OWNERDRAWFIXED as u32
                 | LBS_HASSTRINGS as u32
                 | LBS_NOINTEGRALHEIGHT as u32,
             font,
-        )
+        )?;
+        let bar = scroll::attach(
+            parent,
+            self.get(id),
+            true,
+            id + 1000,
+            self.palette,
+            self.scale,
+        )?;
+        self.scrolls.insert(id, bar);
+        Ok(())
     }
     pub unsafe fn combo(&mut self, parent: HWND, id: u16, font: HFONT) -> Result<(), String> {
         self.add(
@@ -239,22 +286,85 @@ impl Controls {
     }
     pub unsafe fn place(&self, id: u16, x: i32, y: i32, w: i32, h: i32, scale: f32) {
         let px = |v: i32| (v as f32 * scale).round() as i32;
-        MoveWindow(self.get(id), px(x), px(y), px(w.max(1)), px(h.max(1)), 1);
+        let bar_width = if self.scrolls.contains_key(&id) {
+            16
+        } else {
+            0
+        };
+        MoveWindow(
+            self.get(id),
+            px(x),
+            px(y),
+            px((w - bar_width).max(1)),
+            px(h.max(1)),
+            1,
+        );
+        if let Some(bar) = self.scrolls.get(&id) {
+            MoveWindow(bar.hwnd, px(x + w - 14), px(y), px(14), px(h), 1);
+            scroll::sync(*bar);
+        }
+        if id < 700 && id != super::STATUS {
+            let mut rect: RECT = std::mem::zeroed();
+            GetWindowRect(self.get(id), &mut rect);
+            let region = CreateRoundRectRgn(
+                0,
+                0,
+                rect.right - rect.left + 1,
+                rect.bottom - rect.top + 1,
+                px(8),
+                px(8),
+            );
+            if SetWindowRgn(self.get(id), region, 1) == 0 {
+                DeleteObject(region);
+            }
+        }
+        let mut data = 0;
+        if GetWindowSubclass(self.get(id), Some(field_proc), 2, &mut data) != 0 {
+            let style = &*(data as *const FieldStyle);
+            if style.multiline && !style.list {
+                let mut r: RECT = std::mem::zeroed();
+                GetClientRect(self.get(id), &mut r);
+                InflateRect(&mut r, -px(8), -px(8));
+                SendMessageW(self.get(id), EM_SETRECTNP, 0, &r as *const _ as isize);
+            }
+        }
     }
     pub unsafe fn text(&self, id: u16, value: &str) {
-        SetWindowTextW(self.get(id), wide(value).as_ptr());
+        if window_text(self.get(id)) != value {
+            SetWindowTextW(self.get(id), wide(value).as_ptr());
+        }
     }
     pub unsafe fn read(&self, id: u16) -> String {
         window_text(self.get(id))
     }
     pub unsafe fn show(&self, id: u16, show: bool) {
         ShowWindow(self.get(id), if show { SW_SHOW } else { SW_HIDE });
+        if let Some(bar) = self.scrolls.get(&id) {
+            if show {
+                scroll::sync(*bar);
+            } else {
+                ShowWindow(bar.hwnd, SW_HIDE);
+            }
+        }
     }
     pub unsafe fn enable(&self, id: u16, on: bool) {
         windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow(self.get(id), on as i32);
+        if let Some(bar) = self.scrolls.get(&id) {
+            EnableWindow(bar.hwnd, on as i32);
+        }
     }
     pub unsafe fn fill_list(&self, id: u16, items: &[String], selected: usize, combo: bool) {
         let handle = self.get(id);
+        let old_selection = if combo {
+            -1
+        } else {
+            SendMessageW(handle, LB_GETCURSEL, 0, 0)
+        };
+        let old_top = if combo {
+            0
+        } else {
+            SendMessageW(handle, LB_GETTOPINDEX, 0, 0)
+        };
         SendMessageW(handle, WM_SETREDRAW, 0, 0);
         SendMessageW(
             handle,
@@ -280,8 +390,36 @@ impl Controls {
             selected,
             0,
         );
+        if !combo && old_selection == selected as isize {
+            SendMessageW(handle, LB_SETTOPINDEX, old_top.max(0) as usize, 0);
+        }
         SendMessageW(handle, WM_SETREDRAW, 1, 0);
         InvalidateRect(handle, null(), 0);
+    }
+    pub unsafe fn sync_scrolls(&self) {
+        for bar in self.scrolls.values() {
+            scroll::sync(*bar);
+        }
+    }
+    pub unsafe fn style(&mut self, palette: Palette, scale: f32, language: Language) {
+        self.palette = palette;
+        self.scale = scale;
+        for &handle in self.handles.values() {
+            let mut data = 0;
+            if GetWindowSubclass(handle, Some(field_proc), 2, &mut data) != 0 {
+                let s = &mut *(data as *mut FieldStyle);
+                s.palette = palette;
+                s.scale = scale;
+                RedrawWindow(handle, null(), null_mut(), RDW_INVALIDATE | RDW_FRAME);
+            }
+        }
+        for bar in self.scrolls.values() {
+            scroll::style(*bar, palette, scale);
+            SetWindowTextW(
+                bar.hwnd,
+                wide(language.text("Вертикальная прокрутка")).as_ptr(),
+            );
+        }
     }
     pub unsafe fn selection(&self, id: u16, combo: bool) -> Option<usize> {
         let value = SendMessageW(
@@ -354,16 +492,25 @@ pub unsafe fn message(hwnd: HWND, title: &str, value: &str, flags: u32) -> i32 {
 
 pub unsafe fn file_dialog(
     hwnd: HWND,
+    language: Language,
     save: bool,
     image: bool,
     initial: &str,
     title: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let filter = wide(if image {
-        "Изображения PNG и JPEG\0*.png;*.jpg;*.jpeg\0\0"
-    } else {
-        "Проект Rinva\0*.rinva\0\0"
-    });
+    let filter = wide(&format!(
+        "{}\0{}\0\0",
+        language.text(if image {
+            "Изображения PNG и JPEG"
+        } else {
+            "Проект Rinva"
+        }),
+        if image {
+            "*.png;*.jpg;*.jpeg"
+        } else {
+            "*.rinva"
+        }
+    ));
     let mut file = vec![0u16; 32768];
     let initial = wide(initial);
     let n = initial.len().min(file.len());
@@ -404,4 +551,104 @@ pub unsafe fn file_dialog(
     Ok(Some(PathBuf::from(std::ffi::OsString::from_wide(
         &file[..length],
     ))))
+}
+
+/// Radius is in device pixels; the shared 4-DIP token is scaled by each caller.
+pub unsafe fn rounded(dc: HDC, rect: RECT, color: u32, border: u32, radius: i32) {
+    let brush = CreateSolidBrush(color);
+    let pen = CreatePen(PS_SOLID, 1, border);
+    let old_brush = SelectObject(dc, brush);
+    let old_pen = SelectObject(dc, pen);
+    RoundRect(
+        dc,
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.bottom,
+        radius * 2,
+        radius * 2,
+    );
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+struct FieldStyle {
+    palette: Palette,
+    scale: f32,
+    list: bool,
+    multiline: bool,
+}
+unsafe extern "system" fn field_proc(
+    hwnd: HWND,
+    msg: u32,
+    w: WPARAM,
+    l: LPARAM,
+    _id: usize,
+    data: usize,
+) -> LRESULT {
+    if msg == WM_NCDESTROY {
+        RemoveWindowSubclass(hwnd, Some(field_proc), 2);
+        drop(Box::from_raw(data as *mut FieldStyle));
+        return DefSubclassProc(hwnd, msg, w, l);
+    }
+    if msg == WM_MOUSEWHEEL {
+        let style = &*(data as *const FieldStyle);
+        let lines = -((w >> 16) as i16 as i32) / 120 * 3;
+        if style.list {
+            let current = SendMessageW(hwnd, LB_GETTOPINDEX, 0, 0) as i32;
+            SendMessageW(hwnd, LB_SETTOPINDEX, (current + lines).max(0) as usize, 0);
+        } else if style.multiline {
+            SendMessageW(hwnd, EM_LINESCROLL, 0, lines as isize);
+        }
+        PostMessageW(GetParent(hwnd), scroll::SYNC_MESSAGE, 0, 0);
+        return 0;
+    }
+    let result = DefSubclassProc(hwnd, msg, w, l);
+    if matches!(msg, WM_NCPAINT | WM_SETFOCUS | WM_KILLFOCUS) {
+        let style = &*(data as *const FieldStyle);
+        if !style.list {
+            let dc = GetWindowDC(hwnd);
+            let mut r: RECT = std::mem::zeroed();
+            GetWindowRect(hwnd, &mut r);
+            OffsetRect(&mut r, -r.left, -r.top);
+            let old = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            let pen = CreatePen(
+                PS_SOLID,
+                1,
+                if GetFocus() == hwnd {
+                    style.palette.accent
+                } else {
+                    style.palette.border
+                },
+            );
+            let old_pen = SelectObject(dc, pen);
+            RoundRect(
+                dc,
+                0,
+                0,
+                r.right,
+                r.bottom,
+                (8. * style.scale) as i32,
+                (8. * style.scale) as i32,
+            );
+            SelectObject(dc, old);
+            SelectObject(dc, old_pen);
+            DeleteObject(pen);
+            ReleaseDC(hwnd, dc);
+        }
+    }
+    if matches!(
+        msg,
+        WM_KEYUP
+            | WM_LBUTTONUP
+            | WM_SETTEXT
+            | WM_SIZE
+            | WM_VSCROLL
+            | EM_LINESCROLL
+            | LB_SETTOPINDEX
+    ) {
+        PostMessageW(GetParent(hwnd), scroll::SYNC_MESSAGE, 0, 0);
+    }
+    result
 }

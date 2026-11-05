@@ -177,6 +177,12 @@ fn export_is_portable_and_existing_destination_is_untouched() {
     fs::create_dir(temp.0.join("assets")).unwrap();
     fs::write(temp.0.join("assets/bg.png"), b"fixture").unwrap();
     fs::write(temp.0.join("app.exe"), b"exe").unwrap();
+    fs::create_dir(temp.0.join("fonts")).unwrap();
+    fs::write(
+        temp.0.join("fonts/NotoSansCJK-Regular.ttc"),
+        b"font-fixture",
+    )
+    .unwrap();
     let mut project = Project::new();
     project.scenes[0].background = Some("assets/bg.png".into());
     let destination = temp.0.join("build");
@@ -185,6 +191,13 @@ fn export_is_portable_and_existing_destination_is_untouched() {
         storage::read_project(&destination.join("story.rinva")).unwrap(),
         project
     );
+    assert_eq!(
+        fs::read(destination.join("fonts/NotoSansCJK-Regular.ttc")).unwrap(),
+        b"font-fixture"
+    );
+    assert!(fs::read_to_string(destination.join("fonts/OFL.txt"))
+        .unwrap()
+        .contains("SIL OPEN FONT LICENSE"));
     assert_eq!(
         fs::read(destination.join("assets/bg.png")).unwrap(),
         b"fixture"
@@ -277,4 +290,27 @@ fn symlink_asset_escape_is_rejected() {
     std::os::unix::fs::symlink(&outside.0, root.0.join("assets")).unwrap();
     assert!(storage::resolve_asset(&root.0, "assets/secret.png").is_err());
     assert!(storage::import_asset(&root.0, &outside.0.join("secret.png")).is_err());
+}
+
+#[test]
+fn graph_layout_roundtrip_preserves_player_progress_and_old_projects() {
+    let old = Project::demo();
+    let saved = Player::new(&old).unwrap().save();
+    let mut moved = old.clone();
+    moved.scenes[0].node_position = Some(rinva_core::NodePosition { x: -24, y: 360 });
+    assert_ne!(moved.signature(), old.signature());
+    assert_eq!(moved.story_signature(), old.signature());
+    let mut player = Player::new(&moved).unwrap();
+    player.restore(saved).unwrap();
+    let json = serde_json::to_vec(&moved).unwrap();
+    assert_eq!(serde_json::from_slice::<Project>(&json).unwrap(), moved);
+    assert!(!serde_json::to_string(&old)
+        .unwrap()
+        .contains("node_position"));
+    let mut edited = moved.clone();
+    edited.scenes[0].lines[0].text.push('!');
+    assert!(Player::new(&edited)
+        .unwrap()
+        .restore(player.save())
+        .is_err());
 }

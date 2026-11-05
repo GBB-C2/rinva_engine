@@ -1,11 +1,6 @@
 use super::ui::{self, wide};
 use std::{path::Path, ptr::null_mut};
-use windows_sys::Win32::{
-    Foundation::*,
-    Graphics::Gdi::*,
-    Storage::Xps::{PrintWindow, PW_CLIENTONLY},
-    UI::WindowsAndMessaging::WNDPROC,
-};
+use windows_sys::Win32::{Foundation::*, Graphics::Gdi::*, UI::WindowsAndMessaging::WNDPROC};
 
 pub struct Bitmap {
     pub handle: HBITMAP,
@@ -126,6 +121,7 @@ pub struct SceneView<'a> {
     pub background: Option<&'a Bitmap>,
     pub portrait: Option<&'a Bitmap>,
     pub ended: bool,
+    pub end_text: &'a str,
 }
 
 pub unsafe fn scene(
@@ -180,7 +176,13 @@ pub unsafe fn scene(
         right: rect.right - margin,
         bottom: rect.bottom - margin,
     };
-    ui::fill(dc, panel, ui::rgb(0x151b27));
+    ui::rounded(
+        dc,
+        panel,
+        ui::rgb(0x151b27),
+        ui::rgb(0x151b27),
+        (4. * scale) as i32,
+    );
     ui::fill(
         dc,
         RECT {
@@ -213,11 +215,7 @@ pub unsafe fn scene(
     };
     ui::text(
         dc,
-        if view.ended {
-            "Конец истории"
-        } else {
-            view.text
-        },
+        if view.ended { view.end_text } else { view.text },
         RECT {
             left: x,
             top: body_y,
@@ -241,7 +239,35 @@ pub unsafe fn capture(hwnd: HWND, path: &Path) -> Result<(), String> {
         return Err("Screenshot allocation failed".into());
     }
     let old = SelectObject(memory, bitmap);
-    PrintWindow(hwnd, memory, PW_CLIENTONLY);
+    // Complete pending theme/layout paints, then ask the live HWND hierarchy to
+    // render synchronously. PrintWindow's redirected surface can be stale on a
+    // virtual desktop immediately after theme or size changes.
+    RedrawWindow(
+        hwnd,
+        std::ptr::null(),
+        null_mut(),
+        RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+    );
+    // WM_PRINT positions children in window coordinates. Render its nonclient
+    // frame too, offset outside this client-sized bitmap, so all controls retain
+    // their actual client coordinates instead of shifting by the title bar.
+    let mut window: RECT = std::mem::zeroed();
+    GetWindowRect(hwnd, &mut window);
+    let mut client = POINT { x: 0, y: 0 };
+    ClientToScreen(hwnd, &mut client);
+    SetViewportOrgEx(
+        memory,
+        window.left - client.x,
+        window.top - client.y,
+        null_mut(),
+    );
+    SendMessageW(
+        hwnd,
+        WM_PRINT,
+        memory as usize,
+        (PRF_NONCLIENT | PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND) as isize,
+    );
+    GdiFlush();
     SelectObject(memory, old);
     let mut info: BITMAPINFO = std::mem::zeroed();
     info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;

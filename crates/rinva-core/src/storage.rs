@@ -223,6 +223,19 @@ pub fn export_bundle(
             ),
         )
         .map_err(|e| e.to_string())?;
+        if let Some(folder) = executable.parent() {
+            let font = folder.join("fonts/NotoSansCJK-Regular.ttc");
+            if font.is_file() {
+                fs::create_dir(staging.join("fonts")).map_err(|e| e.to_string())?;
+                fs::copy(font, staging.join("fonts/NotoSansCJK-Regular.ttc"))
+                    .map_err(|e| e.to_string())?;
+                fs::write(
+                    staging.join("fonts/OFL.txt"),
+                    include_str!("../../../docs/NOTO_OFL.txt"),
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
         fs::write(
             staging.join("README.txt"),
             "Запустите RinvaPlayer.exe. Передавайте всю папку целиком.\r\n",

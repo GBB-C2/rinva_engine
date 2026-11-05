@@ -39,22 +39,28 @@ jobs:
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo build --locked --release -p rinva-desktop
+      - name: Bundle verified CJK fonts
+        shell: pwsh
+        run: ./tools/fetch-fonts.ps1
       - name: Native smoke test
         shell: pwsh
         run: |
           $process = Start-Process -FilePath target/release/rinva.exe -ArgumentList '--smoke-test', 'smoke-output' -PassThru
           if (-not $process.WaitForExit(90000)) {
             $process.Kill()
+            Get-Content smoke-output/native-trace.txt -ErrorAction SilentlyContinue
             throw 'Native smoke test timed out'
           }
-          if ($process.ExitCode -ne 0) { throw "Native smoke failed: $($process.ExitCode)" }
+          if ($process.ExitCode -ne 0) { Get-Content smoke-output/native-error.txt -ErrorAction SilentlyContinue; throw "Native smoke failed: $($process.ExitCode)" }
           Get-Content smoke-output/native-smoke.txt
+          if (Select-String -Path smoke-output/native-trace.txt -Pattern 'RUNAWAY' -Quiet) { throw 'Native message loop did not settle' }
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist/Rinva -Force
           Copy-Item target/release/rinva.exe, README.md, LICENSE -Destination dist/Rinva
           Copy-Item examples -Destination dist/Rinva -Recurse
+          Copy-Item target/release/fonts -Destination dist/Rinva -Recurse
           Copy-Item docs -Destination dist/Rinva -Recurse
       - uses: actions/upload-artifact@v4
         if: always()
