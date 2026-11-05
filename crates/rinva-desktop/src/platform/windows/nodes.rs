@@ -304,7 +304,9 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                     Hit::Empty => {}
                 }
             }
-            SetCapture(hwnd);
+            if app.graph.drag.is_some() {
+                SetCapture(hwnd);
+            }
             app.refresh();
         }
         WM_MOUSEMOVE => {
@@ -328,10 +330,13 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             }
             if app.graph.drag.is_some() {
                 let linking = matches!(app.graph.drag, Some(Drag::Connect { .. }));
+                let before = app.document.project.signature();
                 if let Err(error) = app.graph.commit(&mut app.document, point) {
                     app.status = error;
                 } else {
-                    app.status = if linking {
+                    app.status = if before == app.document.project.signature() {
+                        "Готово"
+                    } else if linking {
                         "Соединение изменено · Ctrl+S — сохранить"
                     } else {
                         "Положение узлов изменено · Ctrl+S — сохранить"
@@ -372,6 +377,9 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
         }
         WM_CAPTURECHANGED | WM_CANCELMODE | WM_KILLFOCUS => {
             app.graph.cancel();
+            if GetCapture() == hwnd {
+                ReleaseCapture();
+            }
             InvalidateRect(hwnd, null(), 0);
         }
         WM_RBUTTONDOWN => {

@@ -146,6 +146,30 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         "Capture loss did not cancel node drag",
     )?;
     pointer(canvas, WM_LBUTTONDOWN, start);
+    pointer(
+        canvas,
+        WM_MOUSEMOVE,
+        Point::new(start.x + 24., start.y + 24.),
+    );
+    SetFocus(handle(SAVE));
+    pump();
+    check(
+        project() == original && GetCapture() != canvas,
+        "Focus loss left graph capture active",
+    )?;
+    let input = APP.with(|s| {
+        let s = s.borrow();
+        let a = s.as_ref().unwrap();
+        a.graph
+            .screen(graph::input(graph::positions(&a.document.project)[0]))
+    });
+    pointer(canvas, WM_LBUTTONDOWN, input);
+    pointer(canvas, WM_LBUTTONUP, input);
+    check(
+        GetCapture() != canvas,
+        "Clicking an input port retained capture",
+    )?;
+    pointer(canvas, WM_LBUTTONDOWN, start);
     for n in 1..=12 {
         pointer(
             canvas,
@@ -264,28 +288,28 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
             IsWindowVisible(bar.hwnd) != 0,
             "Vertical scrollbar missing for long content",
         )?;
-        let mut info: SCROLLBARINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<SCROLLBARINFO>() as u32;
-        GetScrollBarInfo(bar.hwnd, OBJID_CLIENT, &mut info);
-        let mut r: RECT = std::mem::zeroed();
-        GetClientRect(bar.hwnd, &mut r);
+        let (r, arrow, thumb_top, thumb_bottom) = scroll::geometry(bar.hwnd);
+        smoke_trace(&format!(
+            "scrollbar {id} height={} thumb={thumb_top}..{thumb_bottom}",
+            r.bottom
+        ));
         SendMessageW(
             bar.hwnd,
             WM_LBUTTONDOWN,
             0,
-            packed(r.right / 2, (info.xyThumbTop + info.xyThumbBottom) / 2),
+            packed(r.right / 2, (thumb_top + thumb_bottom) / 2),
         );
         SendMessageW(
             bar.hwnd,
             WM_MOUSEMOVE,
             0,
-            packed(r.right / 2, r.bottom - info.dxyLineButton - 4),
+            packed(r.right / 2, r.bottom - arrow - 4),
         );
         SendMessageW(
             bar.hwnd,
             WM_LBUTTONUP,
             0,
-            packed(r.right / 2, r.bottom - info.dxyLineButton - 4),
+            packed(r.right / 2, r.bottom - arrow - 4),
         );
         pump();
         let first = SendMessageW(
@@ -298,10 +322,10 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
             0,
             0,
         );
-        check(
-            first > 0,
-            "Dragging native scrollbar did not scroll content",
-        )?;
+        if first <= 0 {
+            paint::capture(hwnd, &output.join("scroll-failure.png"))?;
+            return Err(format!("Dragging scrollbar {id} did not scroll content"));
+        }
         SendMessageW(bar.hwnd, WM_KEYDOWN, VK_HOME as usize, 0);
         pump();
         check(

@@ -1701,7 +1701,11 @@ impl App {
             } else {
                 self.palette.text
             },
-            self.resources.font,
+            if draw.CtlType == ODT_LISTBOX || primary {
+                self.resources.font
+            } else {
+                self.resources.small
+            },
             DT_VCENTER
                 | DT_SINGLELINE
                 | DT_END_ELLIPSIS
@@ -1775,6 +1779,11 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
             let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.;
             info.ptMinTrackSize.x = (1120. * scale) as i32;
             info.ptMinTrackSize.y = (760. * scale) as i32;
+            // CI's virtual desktop is small; PrintWindow can still capture a real larger HWND.
+            if SMOKE_TRACE.get().is_some() {
+                info.ptMaxTrackSize.x = (1600. * scale) as i32;
+                info.ptMaxTrackSize.y = (1100. * scale) as i32;
+            }
             0
         }
         WM_DPICHANGED => {

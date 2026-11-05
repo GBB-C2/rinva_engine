@@ -138,6 +138,9 @@ pub fn connect(
                 .ok_or("Scene not found")
         })
         .transpose()?;
+    if target(scene, port) == destination.as_deref() {
+        return Ok(());
+    }
     let layout = positions(&doc.project);
     doc.change(|p| {
         freeze_positions(p, &layout);

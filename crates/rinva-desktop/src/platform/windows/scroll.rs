@@ -1,5 +1,5 @@
 //! The scrollbar remains a Win32 SCROLLBAR for keyboard/accessibility semantics.
-//! Its painting and pointer tracking use the same native geometry and 32-bit range.
+//! Its painting and pointer tracking share geometry and the native 32-bit range.
 use super::ui::{self, Palette};
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::{
@@ -158,6 +158,11 @@ unsafe fn position(hwnd: HWND, desired: i32) {
     } else {
         SendMessageW(target, EM_LINESCROLL, 0, (desired - current) as isize);
     }
+    super::smoke_trace(&format!(
+        "scroll {} desired={desired} previous={current} actual={} count={count} page={page}",
+        GetDlgCtrlID(target),
+        source(&*(data as *const State)).2
+    ));
     sync(Bar { hwnd, target });
     InvalidateRect(target, null(), 0);
     InvalidateRect(hwnd, null(), 0);
@@ -176,18 +181,20 @@ pub unsafe fn request(bar: Bar, code: i32, value: i32) {
     };
     position(bar.hwnd, n);
 }
-unsafe fn geometry(hwnd: HWND) -> (RECT, i32, i32, i32) {
+pub(super) unsafe fn geometry(hwnd: HWND) -> (RECT, i32, i32, i32) {
     let mut rect: RECT = std::mem::zeroed();
     GetClientRect(hwnd, &mut rect);
-    let mut info: SCROLLBARINFO = std::mem::zeroed();
-    info.cbSize = std::mem::size_of::<SCROLLBARINFO>() as u32;
-    GetScrollBarInfo(hwnd, OBJID_CLIENT, &mut info);
-    (
-        rect,
-        info.dxyLineButton.max(1),
-        info.xyThumbTop,
-        info.xyThumbBottom,
-    )
+    let info = range(hwnd);
+    let arrow = rect.right.min(rect.bottom / 2).max(1);
+    let track = (rect.bottom - 2 * arrow).max(0);
+    let extent = (info.nMax - info.nMin + 1).max(1);
+    let thumb = ((track as f64 * info.nPage as f64 / extent as f64).round() as i32)
+        .max(rect.right * 2)
+        .min(track);
+    let maximum = (extent - info.nPage as i32).max(1);
+    let top = arrow
+        + ((track - thumb) as f64 * (info.nPos - info.nMin) as f64 / maximum as f64).round() as i32;
+    (rect, arrow, top, top + thumb)
 }
 unsafe fn paint(hwnd: HWND, dc: HDC, s: &State) {
     let (r, arrow, top, bottom) = geometry(hwnd);
@@ -296,6 +303,10 @@ unsafe extern "system" fn bar_proc(
                     info.nPage as i32
                 })
             };
+            super::smoke_trace(&format!(
+                "scroll pointer down y={y} thumb={top}..{bottom} pos={} page={} max={}",
+                info.nPos, info.nPage, info.nMax
+            ));
             (*(data as *mut State)).press = Some(press);
             SetCapture(hwnd);
             if let Press::Step(delta) = press {
@@ -354,6 +365,9 @@ unsafe extern "system" fn bar_proc(
         WM_CAPTURECHANGED | WM_CANCELMODE | WM_KILLFOCUS => {
             (*(data as *mut State)).press = None;
             KillTimer(hwnd, 1);
+            if GetCapture() == hwnd {
+                ReleaseCapture();
+            }
             InvalidateRect(hwnd, null(), 0);
         }
         WM_KEYDOWN if w as u16 == VK_ESCAPE => {
