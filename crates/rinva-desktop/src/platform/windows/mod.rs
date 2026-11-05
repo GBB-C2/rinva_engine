@@ -1,7 +1,15 @@
+mod fonts;
+mod nodes;
 mod paint;
 mod recovery;
+mod scroll;
+mod smoke_ui;
 mod ui;
 
+use crate::{
+    graph::{self, Graph, Point, Port},
+    i18n::{Language, LANGUAGES},
+};
 use rinva_core::{storage, Choice, Document, Frame, Line, Player, Project, Severity};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -27,6 +35,15 @@ const REDO: u16 = 106;
 const THEME: u16 = 107;
 const EXPORT: u16 = 108;
 const PLAY: u16 = 109;
+const LANGUAGE: u16 = 110;
+const VIEW_PREVIEW: u16 = 111;
+const VIEW_NODES: u16 = 112;
+const GRAPH_FIT: u16 = 113;
+const GRAPH_ARRANGE: u16 = 114;
+const GRAPH_UNLINK: u16 = 115;
+const ZOOM_IN: u16 = 116;
+const ZOOM_OUT: u16 = 117;
+const ZOOM_LABEL: u16 = 118;
 const PROJECT_TITLE: u16 = 201;
 const SCENES: u16 = 202;
 const ADD_SCENE: u16 = 203;
@@ -71,6 +88,58 @@ const APP_COMMAND: u32 = WM_APP + 1;
 const APP_LAYOUT: u32 = WM_APP + 2;
 const APP_CLOSE: u32 = WM_APP + 3;
 
+const BUTTONS: &[(u16, &str)] = &[
+    (NEW, "Новый"),
+    (OPEN, "Открыть"),
+    (SAVE, "Сохранить"),
+    (SAVE_AS, "Сохранить как"),
+    (UNDO, "Отмена"),
+    (REDO, "Повтор"),
+    (THEME, "Тема"),
+    (EXPORT, "Сборка"),
+    (PLAY, "Запустить · F5"),
+    (ADD_SCENE, "+ Сцена"),
+    (DUP_SCENE, "Копия"),
+    (DELETE_SCENE, "Удалить"),
+    (START_SCENE, "Сделать началом"),
+    (BACKGROUND, "Выбрать фон…"),
+    (CLEAR_BG, "Убрать"),
+    (PORTRAIT, "Персонаж…"),
+    (CLEAR_PORTRAIT, "Убрать"),
+    (TAB_LINES, "Реплики"),
+    (TAB_CHOICES, "Развилки"),
+    (ADD_ITEM, "+ Реплика"),
+    (DELETE_ITEM, "Удалить"),
+    (UP, "Выше"),
+    (DOWN, "Ниже"),
+    (PREVIEW_SCENE, "Отсюда"),
+    (BACK, "Назад"),
+    (ADVANCE, "Далее"),
+    (STOP, "В редактор · Esc"),
+    (GAME_SAVE, "Сохранить · F6"),
+    (GAME_LOAD, "Загрузить · F9"),
+    (VIEW_PREVIEW, "Предпросмотр"),
+    (VIEW_NODES, "Ноды"),
+    (GRAPH_FIT, "Вписать"),
+    (GRAPH_ARRANGE, "Расположить"),
+    (GRAPH_UNLINK, "Разорвать"),
+    (ZOOM_IN, "+"),
+    (ZOOM_OUT, "−"),
+];
+
+const LABELS: &[(u16, &str)] = &[
+    (LABEL_PROJECT, "НАЗВАНИЕ НОВЕЛЛЫ"),
+    (LABEL_SCENES, "СЦЕНЫ"),
+    (LABEL_PREVIEW, "ПРЕДПРОСМОТР"),
+    (LABEL_SCENE, "НАЗВАНИЕ СЦЕНЫ"),
+    (LABEL_SPEAKER, "Говорит"),
+    (LABEL_BODY, "Текст реплики"),
+    (LABEL_TARGET, "Перейти к сцене"),
+    (LABEL_NEXT, "После сцены"),
+    (STATUS, "Готово"),
+    (ZOOM_LABEL, "100%"),
+];
+
 thread_local! {
     static APP:RefCell<Option<App>>=const { RefCell::new(None) };
     static SYNCING:Cell<bool>=const { Cell::new(false) };
@@ -90,6 +159,8 @@ impl Drop for SyncGuard {
 #[derive(Serialize, Deserialize)]
 struct Settings {
     dark: bool,
+    #[serde(default)]
+    language: Language,
 }
 
 struct App {
@@ -99,6 +170,9 @@ struct App {
     palette: Palette,
     scale: f32,
     dark: bool,
+    language: Language,
+    graph: Graph,
+    graph_mode: bool,
     document: Document,
     file: Option<PathBuf>,
     asset_root: PathBuf,
@@ -153,58 +227,22 @@ impl App {
             Some(recovery::Session::new(&settings_dir().join("recovery"))?)
         };
         let scale = GetDpiForWindow(hwnd) as f32 / 96.;
-        let dark = storage::read_json::<Settings>(&settings_dir().join("settings.json"))
-            .map(|s| s.dark)
-            .unwrap_or(true);
+        let settings = storage::read_json::<Settings>(&settings_dir().join("settings.json"))
+            .unwrap_or(Settings {
+                dark: true,
+                language: Language::default(),
+            });
+        let dark = settings.dark;
+        let language = settings.language;
         let palette = Palette::new(dark);
-        let resources = Resources::new(scale, palette);
-        let mut controls = Controls::new();
+        let resources = Resources::new(scale, palette, language);
+        let mut controls = Controls::new(palette, scale);
         let font = resources.font;
-        for (id, label) in [
-            (NEW, "Новый"),
-            (OPEN, "Открыть"),
-            (SAVE, "Сохранить"),
-            (SAVE_AS, "Сохранить как"),
-            (UNDO, "Отмена"),
-            (REDO, "Повтор"),
-            (THEME, "Тема"),
-            (EXPORT, "Сборка"),
-            (PLAY, "Запустить · F5"),
-            (ADD_SCENE, "+ Сцена"),
-            (DUP_SCENE, "Копия"),
-            (DELETE_SCENE, "Удалить"),
-            (START_SCENE, "Сделать началом"),
-            (BACKGROUND, "Выбрать фон…"),
-            (CLEAR_BG, "Убрать"),
-            (PORTRAIT, "Персонаж…"),
-            (CLEAR_PORTRAIT, "Убрать"),
-            (TAB_LINES, "Реплики"),
-            (TAB_CHOICES, "Развилки"),
-            (ADD_ITEM, "+ Реплика"),
-            (DELETE_ITEM, "Удалить"),
-            (UP, "Выше"),
-            (DOWN, "Ниже"),
-            (PREVIEW_SCENE, "Отсюда"),
-            (BACK, "Назад"),
-            (ADVANCE, "Далее"),
-            (STOP, "В редактор · Esc"),
-            (GAME_SAVE, "Сохранить · F6"),
-            (GAME_LOAD, "Загрузить · F9"),
-        ] {
-            controls.button(hwnd, id, label, font)?;
+        for &(id, label) in BUTTONS {
+            controls.button(hwnd, id, language.text(label), font)?;
         }
-        for (id, label) in [
-            (LABEL_PROJECT, "НАЗВАНИЕ НОВЕЛЛЫ"),
-            (LABEL_SCENES, "СЦЕНЫ"),
-            (LABEL_PREVIEW, "ПРЕДПРОСМОТР"),
-            (LABEL_SCENE, "НАЗВАНИЕ СЦЕНЫ"),
-            (LABEL_SPEAKER, "Говорит"),
-            (LABEL_BODY, "Текст реплики"),
-            (LABEL_TARGET, "Перейти к сцене"),
-            (LABEL_NEXT, "После сцены"),
-            (STATUS, "Готово"),
-        ] {
-            controls.label(hwnd, id, label, resources.small)?;
+        for &(id, label) in LABELS {
+            controls.label(hwnd, id, language.text(label), resources.small)?;
         }
         for id in [PROJECT_TITLE, SCENE_NAME, SPEAKER] {
             controls.edit(hwnd, id, false, font)?;
@@ -215,10 +253,17 @@ impl App {
         for id in [SCENES, ITEMS, GAME_CHOICES] {
             controls.list(hwnd, id, font)?;
         }
-        for id in [TARGET, NEXT_SCENE] {
+        for id in [TARGET, NEXT_SCENE, LANGUAGE] {
             controls.combo(hwnd, id, font)?;
         }
-        controls.add(hwnd, CANVAS, "RinvaCanvas", "Предпросмотр сцены", 0, font)?;
+        controls.add(
+            hwnd,
+            CANVAS,
+            "RinvaCanvas",
+            language.text("Предпросмотр"),
+            WS_TABSTOP,
+            font,
+        )?;
         let player = if player_only {
             Some(Player::new(&project)?)
         } else {
@@ -233,6 +278,9 @@ impl App {
             palette,
             scale,
             dark,
+            language,
+            graph: Graph::default(),
+            graph_mode: false,
             document: Document::new(project),
             file,
             asset_root,
@@ -253,6 +301,19 @@ impl App {
             export_result: None,
         })
     }
+    fn t<'a>(&self, key: &'a str) -> &'a str {
+        self.language.text(key)
+    }
+    fn persist_settings(&self) -> Result<(), String> {
+        std::fs::create_dir_all(settings_dir()).map_err(|e| e.to_string())?;
+        storage::write_json(
+            &settings_dir().join("settings.json"),
+            &Settings {
+                dark: self.dark,
+                language: self.language,
+            },
+        )
+    }
     fn root(&self) -> PathBuf {
         self.asset_root.clone()
     }
@@ -261,8 +322,7 @@ impl App {
         for (path, snapshot) in
             recovery::candidates(&settings_dir().join("recovery"), self.file.as_deref())
         {
-            let answer=ui::message(self.hwnd,"Восстановить работу?",&format!(
-                "Найдена автокопия новеллы «{}».\n\nДа — восстановить правки.\nНет — удалить эту автокопию.\nОтмена — открыть редактор без восстановления.",snapshot.project.title),MB_YESNOCANCEL|MB_ICONQUESTION);
+            let answer=ui::message(self.hwnd,self.t("Восстановить работу?"),&self.language.format("Найдена автокопия новеллы «{title}».\n\nДа — восстановить правки.\nНет — удалить эту автокопию.\nОтмена — открыть редактор без восстановления.",&[("title",&snapshot.project.title)]),MB_YESNOCANCEL|MB_ICONQUESTION);
             match answer {
                 IDYES => {
                     let source = snapshot.unchanged_source();
@@ -355,7 +415,7 @@ impl App {
     fn game_save_path(&self) -> PathBuf {
         settings_dir()
             .join("saves")
-            .join(format!("{}.json", self.document.project.signature()))
+            .join(format!("{}.json", self.document.project.story_signature()))
     }
 
     unsafe fn layout(&self) {
@@ -370,6 +430,7 @@ impl App {
                 matches!(
                     id,
                     THEME
+                        | LANGUAGE
                         | CANVAS
                         | STATUS
                         | BACK
@@ -385,11 +446,25 @@ impl App {
                     BACK | ADVANCE | STOP | GAME_SAVE | GAME_LOAD | GAME_CHOICES | TRANSCRIPT
                 )
             };
-            ShowWindow(handle, if show { SW_SHOW } else { SW_HIDE });
+            self.controls.show(id, show);
+            let _ = handle;
         }
+        for id in [
+            GRAPH_FIT,
+            GRAPH_ARRANGE,
+            GRAPH_UNLINK,
+            ZOOM_IN,
+            ZOOM_OUT,
+            ZOOM_LABEL,
+        ] {
+            self.controls
+                .show(id, self.graph_mode && self.player.is_none());
+        }
+        self.controls.show(LABEL_PREVIEW, false);
         place(STATUS, 20, h - 28, w - 40, 20);
         if self.player.is_some() {
             place(THEME, w - 100, 20, 80, 32);
+            place(LANGUAGE, w - 268, 20, 152, 220);
             place(STOP, 220, 20, 158, 32);
             place(CANVAS, 20, 72, w - 40, h - 296);
             place(TRANSCRIPT, 32, h - 210, (w - 80) / 2, 132);
@@ -412,10 +487,11 @@ impl App {
                 place(id, x, 20, width, 32);
             }
             place(PLAY, w - 158, 20, 138, 32);
-            place(LABEL_PROJECT, 28, 98, 184, 20);
-            place(PROJECT_TITLE, 28, 124, 184, 32);
-            place(LABEL_SCENES, 28, 178, 184, 20);
-            place(SCENES, 20, 206, 200, h - 374);
+            place(LANGUAGE, 28, 96, 184, 220);
+            place(LABEL_PROJECT, 28, 146, 184, 20);
+            place(PROJECT_TITLE, 28, 172, 184, 32);
+            place(LABEL_SCENES, 28, 224, 184, 20);
+            place(SCENES, 20, 252, 200, h - 420);
             place(START_SCENE, 28, h - 154, 184, 32);
             place(ADD_SCENE, 28, h - 114, 184, 32);
             place(DUP_SCENE, 28, h - 74, 88, 32);
@@ -424,7 +500,11 @@ impl App {
             let center = 248;
             let cw = right - center - 16;
             let preview_h = (cw * 9 / 16).min(h - 360).max(180);
-            place(LABEL_PREVIEW, center, 90, cw - 100, 20);
+            place(VIEW_PREVIEW, center, 84, 112, 28);
+            place(VIEW_NODES, center + 120, 84, 88, 28);
+            place(ZOOM_OUT, center + 220, 84, 30, 28);
+            place(ZOOM_LABEL, center + 256, 90, 58, 20);
+            place(ZOOM_IN, center + 314, 84, 30, 28);
             place(PREVIEW_SCENE, center + cw - 94, 84, 94, 28);
             place(CANVAS, center, 120, cw, preview_h);
             let tabs_y = 120 + preview_h + 16;
@@ -456,6 +536,16 @@ impl App {
                 place(LABEL_BODY, right + 16, 350, 268, 20);
                 place(BODY, right + 16, 376, 268, h - 510);
             }
+            if self.graph_mode {
+                place(CANVAS, center, 120, cw, h - 210);
+                for id in [TAB_LINES, TAB_CHOICES, ITEMS, DELETE_ITEM, UP, DOWN] {
+                    self.controls.show(id, false);
+                }
+                place(ADD_ITEM, center, h - 74, 110, 32);
+                place(GRAPH_UNLINK, center + 118, h - 74, 110, 32);
+                place(GRAPH_ARRANGE, center + 236, h - 74, 118, 32);
+                place(GRAPH_FIT, center + 362, h - 74, 100, 32);
+            }
             place(LABEL_NEXT, right + 16, h - 114, 268, 20);
             place(NEXT_SCENE, right + 16, h - 88, 268, 220);
         }
@@ -473,11 +563,64 @@ impl App {
             null_mut(),
             RDW_INVALIDATE | RDW_ALLCHILDREN,
         );
+        self.controls.sync_scrolls();
         InvalidateRect(self.controls.get(CANVAS), null(), 0);
+    }
+
+    unsafe fn canvas_size(&self) -> Point {
+        let mut r: RECT = std::mem::zeroed();
+        GetClientRect(self.controls.get(CANVAS), &mut r);
+        Point::new(r.right as f32 / self.scale, r.bottom as f32 / self.scale)
+    }
+    unsafe fn fit_graph(&mut self) {
+        let size = self.canvas_size();
+        self.graph.fit(&self.document.project, size.x, size.y);
     }
 
     unsafe fn refresh(&mut self) {
         let _guard = SyncGuard::new();
+        for &(id, label) in BUTTONS.iter().chain(LABELS) {
+            self.controls.text(id, self.t(label));
+        }
+        self.controls.fill_list(
+            LANGUAGE,
+            &LANGUAGES
+                .iter()
+                .map(|l| l.name().to_owned())
+                .collect::<Vec<_>>(),
+            self.language.index(),
+            true,
+        );
+        self.controls.text(
+            ZOOM_LABEL,
+            &format!("{}%", (self.graph.zoom * 100.).round() as i32),
+        );
+        self.controls.enable(
+            GRAPH_UNLINK,
+            self.graph.selected_port.is_some_and(|(i, p)| {
+                self.document
+                    .project
+                    .scenes
+                    .get(i)
+                    .and_then(|s| graph::target(s, p))
+                    .is_some()
+            }),
+        );
+        self.controls.text(
+            CANVAS,
+            &format!(
+                "{} — {}",
+                self.t(if self.graph_mode {
+                    "Ноды"
+                } else {
+                    "Предпросмотр"
+                }),
+                self.document.project.scenes[self
+                    .selected_scene
+                    .min(self.document.project.scenes.len() - 1)]
+                .name
+            ),
+        );
         self.selected_scene = self
             .selected_scene
             .min(self.document.project.scenes.len() - 1);
@@ -488,6 +631,16 @@ impl App {
             scene.lines.len()
         };
         self.selected_item = self.selected_item.min(count.saturating_sub(1));
+        if self.graph.selected_port.is_some_and(|(i, port)| {
+            !self
+                .document
+                .project
+                .scenes
+                .get(i)
+                .is_some_and(|s| graph::ports(s).contains(&port))
+        }) {
+            self.graph.selected_port = None;
+        }
         self.controls
             .text(PROJECT_TITLE, &self.document.project.title);
         self.controls.text(SCENE_NAME, &self.scene().name);
@@ -559,39 +712,39 @@ impl App {
         self.controls.text(
             LABEL_BODY,
             if self.choices_tab {
-                "Текст варианта ответа"
+                self.t("Текст варианта ответа")
             } else {
-                "Текст реплики"
+                self.t("Текст реплики")
             },
         );
         self.controls.text(
             ADD_ITEM,
             if self.choices_tab {
-                "+ Ответ"
+                self.t("+ Ответ")
             } else {
-                "+ Реплика"
+                self.t("+ Реплика")
             },
         );
         self.controls.text(
             BACKGROUND,
             if scene.background.is_some() {
-                "Заменить фон…"
+                self.t("Заменить фон…")
             } else {
-                "Выбрать фон…"
+                self.t("Выбрать фон…")
             },
         );
         self.controls.text(
             PORTRAIT,
             if scene.portrait.is_some() {
-                "Заменить персонажа…"
+                self.t("Заменить персонажа…")
             } else {
-                "Персонаж…"
+                self.t("Персонаж…")
             },
         );
         self.controls.enable(CLEAR_BG, scene.background.is_some());
         self.controls
             .enable(CLEAR_PORTRAIT, scene.portrait.is_some());
-        let mut destinations = vec!["Конец истории".to_owned()];
+        let mut destinations = vec![self.t("Конец истории").to_owned()];
         destinations.extend(self.document.project.scenes.iter().map(|s| s.name.clone()));
         let next = scene
             .next
@@ -637,9 +790,9 @@ impl App {
         self.controls.text(
             THEME,
             if self.dark {
-                "Светлая"
+                self.t("Светлая")
             } else {
-                "Тёмная"
+                self.t("Тёмная")
             },
         );
         if let Some(player) = &self.player {
@@ -660,20 +813,29 @@ impl App {
                     "Далее · Enter",
                 ),
                 Frame::Choices { choices, .. } => (
-                    "Выберите ответ. Стрелки — выбор, Enter — подтвердить.".into(),
+                    self.t("Выберите ответ. Стрелки — выбор, Enter — подтвердить.")
+                        .into(),
                     choices.iter().map(|c| c.text.clone()).collect(),
                     "Выбрать · Enter",
                 ),
                 Frame::End { .. } => (
-                    "Конец истории. Спасибо за чтение.".into(),
+                    self.t("Конец истории. Спасибо за чтение.").into(),
                     vec![],
                     "Начать заново",
                 ),
             };
             self.controls.text(TRANSCRIPT, &text);
             self.controls.fill_list(GAME_CHOICES, &choices, 0, false);
-            self.controls.text(ADVANCE, label);
+            self.controls.text(ADVANCE, self.t(label));
         }
+        self.controls.text(
+            ADD_ITEM,
+            if self.graph_mode || self.choices_tab {
+                self.t("+ Ответ")
+            } else {
+                self.t("+ Реплика")
+            },
+        );
         self.load_images();
         self.update_title();
         self.layout();
@@ -695,7 +857,8 @@ impl App {
             ))
             .as_ptr(),
         );
-        self.controls.text(STATUS, &self.status);
+        self.controls
+            .text(STATUS, &self.language.message(&self.status));
         InvalidateRect(self.controls.get(CANVAS), null(), 0);
     }
 
@@ -776,9 +939,15 @@ impl App {
                 .file
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Новелла.rinva".into());
-            let Some(path) =
-                ui::file_dialog(self.hwnd, true, false, &initial, "Сохранить новеллу")?
+                .unwrap_or_else(|| self.t("Новелла.rinva").into());
+            let Some(path) = ui::file_dialog(
+                self.hwnd,
+                self.language,
+                true,
+                false,
+                &initial,
+                self.t("Сохранить новеллу"),
+            )?
             else {
                 return Ok(false);
             };
@@ -813,8 +982,8 @@ impl App {
         }
         match ui::message(
             self.hwnd,
-            "Несохранённые изменения",
-            "Сохранить изменения в новелле перед продолжением?",
+            self.t("Несохранённые изменения"),
+            self.t("Сохранить изменения в новелле перед продолжением?"),
             MB_YESNOCANCEL | MB_ICONQUESTION,
         ) {
             IDYES => self.save(false),
@@ -842,8 +1011,12 @@ impl App {
         {
             return Ok(());
         }
-        if matches!(id, TARGET | NEXT_SCENE) && notification as u32 != CBN_SELCHANGE {
+        if matches!(id, TARGET | NEXT_SCENE | LANGUAGE) && notification as u32 != CBN_SELCHANGE {
             return Ok(());
+        }
+        self.graph.cancel();
+        if GetCapture() == self.controls.get(CANVAS) {
+            ReleaseCapture();
         }
         self.document.finish_edit();
         let index = self.selected_scene;
@@ -852,7 +1025,13 @@ impl App {
             NEW => {
                 if self.may_replace()? {
                     self.clear_recovery()?;
-                    self.document = Document::new(Project::new());
+                    let mut project = Project::new();
+                    project.title = self.t("Моя новелла").into();
+                    project.scenes[0].name = self.t("Начало").into();
+                    project.scenes[0].lines[0].text =
+                        self.t("Здесь начинается ваша история.").into();
+                    self.document = Document::new(project);
+                    self.graph = Graph::default();
                     self.file = None;
                     self.asset_root = std::env::current_dir().map_err(|e| e.to_string())?;
                     self.source_signature = None;
@@ -863,9 +1042,14 @@ impl App {
             }
             OPEN => {
                 if self.may_replace()? {
-                    if let Some(path) =
-                        ui::file_dialog(self.hwnd, false, false, "", "Открыть новеллу")?
-                    {
+                    if let Some(path) = ui::file_dialog(
+                        self.hwnd,
+                        self.language,
+                        false,
+                        false,
+                        "",
+                        self.t("Открыть новеллу"),
+                    )? {
                         let project = storage::read_project(&path)?;
                         self.clear_recovery()?;
                         self.asset_root = path
@@ -874,6 +1058,7 @@ impl App {
                             .to_path_buf();
                         self.source_signature = Some(project.signature());
                         self.document = Document::new(project);
+                        self.graph = Graph::default();
                         self.file = Some(path);
                         self.selected_scene = 0;
                         self.selected_item = 0;
@@ -910,32 +1095,94 @@ impl App {
                 self.palette = Palette::new(self.dark);
                 self.rebuild_resources();
                 theme_title(self.hwnd, self.dark);
-                std::fs::create_dir_all(settings_dir()).map_err(|e| e.to_string())?;
-                storage::write_json(
-                    &settings_dir().join("settings.json"),
-                    &Settings { dark: self.dark },
-                )?;
+                self.persist_settings()?;
+            }
+            LANGUAGE => {
+                if let Some(i) = self.controls.selection(LANGUAGE, true) {
+                    if let Some(&language) = LANGUAGES.get(i) {
+                        self.language = language;
+                        self.rebuild_resources();
+                        self.persist_settings()?;
+                        self.status = "Язык изменён.".into();
+                    }
+                }
+            }
+            VIEW_PREVIEW => {
+                self.graph_mode = false;
+            }
+            VIEW_NODES => {
+                self.graph_mode = true;
+                self.status=self.t("Ноды: перетащите выход к входу · колесо — прокрутка · Ctrl+колесо — масштаб · Esc — отмена").into();
+                self.layout();
+                self.fit_graph();
+            }
+            GRAPH_FIT => self.fit_graph(),
+            ZOOM_IN | ZOOM_OUT => {
+                let r = self.canvas_size();
+                self.graph.zoom_at(
+                    if id == ZOOM_IN { 1.2 } else { 1. / 1.2 },
+                    Point::new(r.x / 2., r.y / 2.),
+                );
+            }
+            GRAPH_ARRANGE => {
+                let positions = graph::auto_layout(&self.document.project);
+                self.document.change(|p| {
+                    for (s, point) in p.scenes.iter_mut().zip(positions) {
+                        s.node_position = Some(point.position());
+                    }
+                });
+                self.fit_graph();
+                self.status = "Положение узлов изменено · Ctrl+S — сохранить".into();
+            }
+            GRAPH_UNLINK => {
+                if let Some((scene, port)) = self.graph.selected_port {
+                    graph::connect(&mut self.document, scene, port, None)?;
+                    self.status = "Соединение изменено · Ctrl+S — сохранить".into();
+                }
             }
             SCENES => {
                 if let Some(i) = self.controls.selection(SCENES, false) {
                     self.selected_scene = i;
                     self.selected_item = 0;
+                    self.graph.selected_port = None;
                 }
             }
             ITEMS => {
                 if let Some(i) = self.controls.selection(ITEMS, false) {
                     self.selected_item = i;
+                    self.graph.selected_port = if self.choices_tab {
+                        Some((self.selected_scene, Port::Choice(i)))
+                    } else {
+                        None
+                    };
                 }
             }
             ADD_SCENE => {
-                self.selected_scene = self.document.add_scene();
+                let name = format!(
+                    "{} {}",
+                    self.t("Сцена"),
+                    self.document.project.scenes.len() + 1
+                );
+                let line = self.t("Здесь начинается ваша история.").to_owned();
+                let next = self.document.project.scenes.len();
+                self.document.change(|p| {
+                    let mut scene = rinva_core::Scene::new(p.next_scene_id(), name);
+                    scene.lines[0].text = line;
+                    p.scenes.push(scene);
+                });
+                self.selected_scene = next;
+                self.graph.selected_port = None;
                 self.selected_item = 0;
             }
             DUP_SCENE => {
+                let suffix = self.t(" · копия").to_owned();
+                let position = graph::positions(&self.document.project)[index];
                 self.document.change(|project| {
                     let mut copy = project.scenes[index].clone();
                     copy.id = project.next_scene_id();
-                    copy.name.push_str(" · копия");
+                    copy.name.push_str(&suffix);
+                    copy.node_position =
+                        Some(Point::new(position.x + 28., position.y + 28.).position());
                     project.scenes.push(copy);
                 });
                 self.selected_scene = self.document.project.scenes.len() - 1;
@@ -944,8 +1191,8 @@ impl App {
             DELETE_SCENE => {
                 if ui::message(
                     self.hwnd,
-                    "Удалить сцену",
-                    "Удалить выбранную сцену? Действие можно отменить.",
+                    self.t("Удалить сцену"),
+                    self.t("Удалить выбранную сцену? Действие можно отменить."),
                     MB_YESNO | MB_ICONQUESTION,
                 ) == IDYES
                 {
@@ -966,6 +1213,11 @@ impl App {
                 self.selected_item = 0;
             }
             ADD_ITEM => {
+                if self.graph_mode {
+                    self.choices_tab = true;
+                }
+                let choice_text = self.t("Новый ответ").to_owned();
+                let line_text = self.t("Новая реплика").to_owned();
                 let choices = self.choices_tab;
                 self.document.change(|project| {
                     let target = project
@@ -979,13 +1231,13 @@ impl App {
                     if choices {
                         scene.next = None;
                         scene.choices.push(Choice {
-                            text: "Новый ответ".into(),
+                            text: choice_text,
                             target,
                         });
                     } else {
                         scene.lines.push(Line {
                             speaker: String::new(),
-                            text: "Новая реплика".into(),
+                            text: line_text,
                         });
                     }
                 });
@@ -1059,13 +1311,14 @@ impl App {
                 }
                 if let Some(source) = ui::file_dialog(
                     self.hwnd,
+                    self.language,
                     false,
                     true,
                     "",
                     if id == BACKGROUND {
-                        "Выберите фон"
+                        self.t("Выберите фон")
                     } else {
-                        "Выберите PNG персонажа"
+                        self.t("Выберите PNG персонажа")
                     },
                 )? {
                     // Decode before copying, so unsupported/corrupt data never enters the document.
@@ -1173,10 +1426,11 @@ impl App {
                 }
                 if let Some(path) = ui::file_dialog(
                     self.hwnd,
+                    self.language,
                     true,
                     false,
-                    "Моя новелла.rinva",
-                    "Сборка: укажите новое имя; будет создана папка с этим именем",
+                    self.t("Моя новелла.rinva"),
+                    self.t("Сборка: укажите новое имя; будет создана папка с этим именем"),
                 )? {
                     let destination = path.with_extension("build");
                     let project = self.document.project.clone();
@@ -1211,7 +1465,7 @@ impl App {
     }
 
     unsafe fn rebuild_resources(&mut self) {
-        let resources = Resources::new(self.scale, self.palette);
+        let resources = Resources::new(self.scale, self.palette, self.language);
         for (&id, &handle) in &self.controls.handles {
             SendMessageW(
                 handle,
@@ -1225,6 +1479,7 @@ impl App {
             );
         }
         self.resources = resources;
+        self.controls.style(self.palette, self.scale, self.language);
     }
 
     unsafe fn paint_frame(&self, dc: HDC, rect: RECT) {
@@ -1271,7 +1526,7 @@ impl App {
             DT_LEFT | DT_SINGLELINE,
         );
         if self.player.is_none() {
-            ui::fill(
+            ui::rounded(
                 dc,
                 RECT {
                     left: px(16),
@@ -1280,8 +1535,10 @@ impl App {
                     bottom: rect.bottom - px(36),
                 },
                 self.palette.surface,
+                self.palette.surface,
+                px(4),
             );
-            ui::fill(
+            ui::rounded(
                 dc,
                 RECT {
                     left: rect.right - px(316),
@@ -1290,17 +1547,23 @@ impl App {
                     bottom: rect.bottom - px(36),
                 },
                 self.palette.surface,
+                self.palette.surface,
+                px(4),
             );
         }
     }
 
     unsafe fn paint_canvas(&self, dc: HDC, rect: RECT) {
+        if self.graph_mode && self.player.is_none() {
+            nodes::paint(self, dc, rect);
+            return;
+        }
         let (scene, speaker, text, ended) = if let Some(player) = &self.player {
             match player.frame() {
                 Frame::Dialogue { scene, line } => {
                     (scene, line.speaker.as_str(), line.text.as_str(), false)
                 }
-                Frame::Choices { scene, .. } => (scene, "", "Выберите ответ ниже", false),
+                Frame::Choices { scene, .. } => (scene, "", self.t("Выберите ответ ниже"), false),
                 Frame::End { scene } => (scene, "", "", true),
             }
         } else {
@@ -1310,10 +1573,10 @@ impl App {
                 scene,
                 line.map(|l| l.speaker.as_str()).unwrap_or(""),
                 if self.choices_tab {
-                    "Варианты ответа появятся после реплик сцены."
+                    self.t("Варианты ответа появятся после реплик сцены.")
                 } else {
                     line.map(|l| l.text.as_str())
-                        .unwrap_or("Добавьте первую реплику кнопкой «+ Реплика».")
+                        .unwrap_or(self.t("Добавьте первую реплику кнопкой «+ Реплика»."))
                 },
                 false,
             )
@@ -1328,6 +1591,7 @@ impl App {
                 background: self.background.as_ref(),
                 portrait: self.portrait.as_ref(),
                 ended,
+                end_text: self.t("Конец истории"),
             },
             self.scale,
             self.resources.font,
@@ -1339,8 +1603,10 @@ impl App {
         let id = draw.CtlID as u16;
         let selected = draw.itemState & ODS_SELECTED != 0;
         let disabled = draw.itemState & ODS_DISABLED != 0;
-        let active =
-            (id == TAB_LINES && !self.choices_tab) || (id == TAB_CHOICES && self.choices_tab);
+        let active = (id == TAB_LINES && !self.choices_tab)
+            || (id == TAB_CHOICES && self.choices_tab)
+            || (id == VIEW_NODES && self.graph_mode)
+            || (id == VIEW_PREVIEW && !self.graph_mode);
         let primary = matches!(id, PLAY | ADVANCE);
         let mut pointer: POINT = std::mem::zeroed();
         GetCursorPos(&mut pointer);
@@ -1355,12 +1621,30 @@ impl App {
         } else {
             self.palette.field
         };
-        ui::fill(draw.hDC, draw.rcItem, color);
-        if draw.CtlType != ODT_LISTBOX {
-            let border = CreateSolidBrush(self.palette.border);
-            FrameRect(draw.hDC, &draw.rcItem, border);
-            DeleteObject(border);
+        ui::fill(
+            draw.hDC,
+            draw.rcItem,
+            if draw.CtlType == ODT_LISTBOX {
+                self.palette.field
+            } else {
+                self.palette.surface
+            },
+        );
+        let mut shape = draw.rcItem;
+        if draw.CtlType == ODT_LISTBOX {
+            InflateRect(&mut shape, -2, -2);
         }
+        ui::rounded(
+            draw.hDC,
+            shape,
+            color,
+            if draw.CtlType == ODT_LISTBOX {
+                color
+            } else {
+                self.palette.border
+            },
+            (4. * self.scale).round() as i32,
+        );
         let value = if draw.CtlType == ODT_LISTBOX {
             if draw.itemID == u32::MAX {
                 return;
@@ -1440,9 +1724,9 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                         if let Err(error) =
                             app.command((w & 0xffff) as u16, ((w >> 16) & 0xffff) as u16)
                         {
-                            app.status = error.clone();
+                            app.status = app.language.message(&error);
                             app.update_title();
-                            ui::message(hwnd, "Rinva", &error, MB_OK | MB_ICONERROR);
+                            ui::message(hwnd, "Rinva", &app.status, MB_OK | MB_ICONERROR);
                         }
                     }
                 }
@@ -1547,12 +1831,43 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
             }
             DefWindowProcW(hwnd, msg, w, l)
         }),
+        scroll::SYNC_MESSAGE => {
+            APP.with(|slot| {
+                if let Ok(slot) = slot.try_borrow() {
+                    if let Some(app) = slot.as_ref() {
+                        app.controls.sync_scrolls();
+                    }
+                }
+            });
+            0
+        }
+        WM_VSCROLL => {
+            APP.with(|slot| {
+                if let Ok(slot) = slot.try_borrow() {
+                    if let Some(app) = slot.as_ref() {
+                        if let Some(bar) =
+                            app.controls.scrolls.values().find(|b| b.hwnd == l as HWND)
+                        {
+                            let mut info = SCROLLINFO {
+                                cbSize: std::mem::size_of::<SCROLLINFO>() as u32,
+                                fMask: SIF_TRACKPOS,
+                                ..std::mem::zeroed()
+                            };
+                            GetScrollInfo(bar.hwnd, SB_CTL, &mut info);
+                            scroll::request(*bar, (w & 0xffff) as i32, info.nTrackPos);
+                        }
+                    }
+                }
+            });
+            0
+        }
         WM_TIMER => {
             APP.with(|slot|if let Ok(mut slot)=slot.try_borrow_mut(){if let Some(app)=slot.as_mut(){
             app.autosave_tick();
+            app.controls.sync_scrolls();
             if let Some(result)=app.export_result.as_ref().and_then(|rx|rx.try_recv().ok()){
                 app.export_result=None;
-                match result {Ok(path)=>{app.status=format!("Сборка готова: {}",path.display());ui::message(hwnd,"Сборка готова",&format!("Папка: {}\n\nЗапустите RinvaPlayer.exe. Для передачи игры скопируйте всю папку.",path.display()),MB_OK|MB_ICONINFORMATION);},Err(error)=>{app.status=error.clone();ui::message(hwnd,"Не удалось собрать новеллу",&error,MB_OK|MB_ICONERROR);}}
+                match result {Ok(path)=>{app.status=app.language.format("Сборка готова: {path}",&[("path",&path.to_string_lossy())]);ui::message(hwnd,app.t("Сборка готова"),&app.language.format("Папка: {path}\n\nЗапустите RinvaPlayer.exe. Для передачи игры скопируйте всю папку.",&[("path",&path.to_string_lossy())]),MB_OK|MB_ICONINFORMATION);},Err(error)=>{app.status=app.language.message(&error);ui::message(hwnd,app.t("Не удалось собрать новеллу"),&app.status,MB_OK|MB_ICONERROR);}}
                 app.refresh();
             }
         }});
@@ -1569,8 +1884,8 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                         if app.export_result.is_some() {
                             ui::message(
                                 hwnd,
-                                "Сборка выполняется",
-                                "Дождитесь завершения сборки перед закрытием.",
+                                app.t("Сборка выполняется"),
+                                app.t("Дождитесь завершения сборки перед закрытием."),
                                 MB_OK,
                             );
                             return false;
@@ -1582,7 +1897,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                                         if let Err(error) = app.clear_recovery() {
                                             ui::message(
                                                 hwnd,
-                                                "Не удалось убрать автокопию",
+                                                app.t("Не удалось убрать автокопию"),
                                                 &error,
                                                 MB_OK | MB_ICONWARNING,
                                             );
@@ -1593,7 +1908,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                                 Err(error) => {
                                     ui::message(
                                         hwnd,
-                                        "Не удалось сохранить",
+                                        app.t("Не удалось сохранить"),
                                         &error,
                                         MB_OK | MB_ICONERROR,
                                     );
@@ -1620,6 +1935,39 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
 
 unsafe extern "system" fn canvas_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     std::panic::catch_unwind(|| {
+        if msg == WM_GETDLGCODE {
+            return APP.with(|slot| {
+                if slot
+                    .try_borrow()
+                    .ok()
+                    .and_then(|s| s.as_ref().map(|a| a.graph_mode && a.player.is_none()))
+                    .unwrap_or(false)
+                {
+                    (DLGC_WANTARROWS
+                        | DLGC_WANTCHARS
+                        | if matches!(w as u16, VK_ESCAPE | VK_DELETE) {
+                            DLGC_WANTALLKEYS
+                        } else {
+                            0
+                        }) as isize
+                } else {
+                    0
+                }
+            });
+        }
+        if !matches!(msg, WM_PAINT | WM_PRINTCLIENT | WM_ERASEBKGND) {
+            let handled = APP.with(|slot| {
+                if let Ok(mut slot) = slot.try_borrow_mut() {
+                    if let Some(app) = slot.as_mut() {
+                        return nodes::input_event(app, hwnd, msg, w, l);
+                    }
+                }
+                false
+            });
+            if handled {
+                return 0;
+            }
+        }
         if msg == WM_ERASEBKGND {
             return 1;
         }
@@ -1707,6 +2055,13 @@ unsafe fn shortcut(message: &MSG) -> bool {
                     }
                 }
                 0x59 if !text_entry => REDO,
+                0x47 if !text_entry => {
+                    if app.graph_mode {
+                        VIEW_PREVIEW
+                    } else {
+                        VIEW_NODES
+                    }
+                }
                 _ => return None,
             }
         } else if key == VK_F5 {
@@ -1745,6 +2100,7 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         }
         paint::register(instance, Some(canvas_proc))?;
         let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let _fonts = fonts::Fonts::load(&executable)?;
         let standalone = executable
             .file_stem()
             .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("RinvaPlayer"));
@@ -1904,6 +2260,7 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     if APP.with(|slot| slot.borrow().as_ref().unwrap().document.project.clone()) != original {
         return Err("Native text session undo failed".into());
     }
+    smoke_ui::run(hwnd, output)?;
     let original_dark = APP.with(|slot| slot.borrow().as_ref().unwrap().dark);
     if !original_dark {
         command(THEME);
@@ -1960,6 +2317,6 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
         command(THEME);
     }
     APP.with(|slot| slot.borrow_mut().as_mut().unwrap().clear_recovery())?;
-    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, Unicode edit notifications and grouped undo, scene command, undo/redo, dropdown dismissal, live theme switch, playback choice and rollback, project roundtrip, timer-driven background autosave, live-session isolation, crash recovery, backup fallback, asynchronous discard, screenshots.\n").map_err(|e|e.to_string())?;
+    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, Unicode edit notifications and grouped undo, scene command, undo/redo, dropdown dismissal, live theme switch, playback choice and rollback, project roundtrip, timer-driven background autosave, live-session isolation, crash recovery, backup fallback, asynchronous discard, rounded controls, five live languages, node drag/cancel/capture loss, graph connections/undo, arrange/zoom, native scrollbar dragging/keyboard/wheel, screenshots.\n").map_err(|e|e.to_string())?;
     Ok(())
 }

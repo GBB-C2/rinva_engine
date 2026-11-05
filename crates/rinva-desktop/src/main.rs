@@ -1,5 +1,12 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod graph;
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod i18n;
+
 #[cfg(windows)]
 #[path = "platform/windows/mod.rs"]
 mod platform;
@@ -24,8 +31,22 @@ fn main() {
         }
     }
     #[cfg(windows)]
+    let smoke_output = args
+        .first()
+        .is_some_and(|arg| arg == "--smoke-test")
+        .then(|| {
+            args.get(1)
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| "smoke-output".into())
+        });
+    #[cfg(windows)]
     if let Err(error) = platform::run(args) {
-        platform::show_fatal(&error);
+        if let Some(output) = smoke_output {
+            let _ = std::fs::create_dir_all(&output);
+            let _ = std::fs::write(output.join("native-error.txt"), &error);
+        } else {
+            platform::show_fatal(&error);
+        }
         std::process::exit(1);
     }
     #[cfg(not(windows))]

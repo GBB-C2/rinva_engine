@@ -146,7 +146,7 @@ impl Player {
         SaveGame {
             version: 1,
             project_id: self.project.id.clone(),
-            signature: self.project.signature(),
+            signature: self.project.story_signature(),
             position: self.position.clone(),
             history: self.history.clone(),
         }
@@ -154,7 +154,7 @@ impl Player {
     pub fn restore(&mut self, saved: SaveGame) -> Result<(), String> {
         if saved.version != 1
             || saved.project_id != self.project.id
-            || saved.signature != self.project.signature()
+            || saved.signature != self.project.story_signature()
         {
             return Err("Сохранение относится к другой версии новеллы.".into());
         }

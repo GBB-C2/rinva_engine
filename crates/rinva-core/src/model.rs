@@ -27,6 +27,16 @@ pub struct Scene {
     pub choices: Vec<Choice>,
     #[serde(default)]
     pub next: Option<String>,
+    /// Authoring coordinates; old projects need no migration. Excluded from game saves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_position: Option<NodePosition>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodePosition {
+    pub x: i32,
+    pub y: i32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +105,15 @@ impl Project {
             (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
         });
         format!("{hash:016x}")
+    }
+
+    /// Rearranging the editor graph must not invalidate a player's progress.
+    pub fn story_signature(&self) -> String {
+        let mut story = self.clone();
+        for scene in &mut story.scenes {
+            scene.node_position = None;
+        }
+        story.signature()
     }
 
     pub fn validate(&self) -> Vec<Issue> {
@@ -260,6 +279,7 @@ impl Scene {
             }],
             choices: vec![],
             next: None,
+            node_position: None,
         }
     }
 }

@@ -126,6 +126,7 @@ pub struct SceneView<'a> {
     pub background: Option<&'a Bitmap>,
     pub portrait: Option<&'a Bitmap>,
     pub ended: bool,
+    pub end_text: &'a str,
 }
 
 pub unsafe fn scene(
@@ -180,7 +181,13 @@ pub unsafe fn scene(
         right: rect.right - margin,
         bottom: rect.bottom - margin,
     };
-    ui::fill(dc, panel, ui::rgb(0x151b27));
+    ui::rounded(
+        dc,
+        panel,
+        ui::rgb(0x151b27),
+        ui::rgb(0x151b27),
+        (4. * scale) as i32,
+    );
     ui::fill(
         dc,
         RECT {
@@ -213,11 +220,7 @@ pub unsafe fn scene(
     };
     ui::text(
         dc,
-        if view.ended {
-            "Конец истории"
-        } else {
-            view.text
-        },
+        if view.ended { view.end_text } else { view.text },
         RECT {
             left: x,
             top: body_y,
