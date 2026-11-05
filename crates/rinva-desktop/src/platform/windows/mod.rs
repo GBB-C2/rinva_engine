@@ -140,6 +140,20 @@ const LABELS: &[(u16, &str)] = &[
     (ZOOM_LABEL, "100%"),
 ];
 
+static SMOKE_TRACE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+fn smoke_trace(value: &str) {
+    if let Some(path) = SMOKE_TRACE.get() {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(file, "{value}");
+        }
+    }
+}
+
 thread_local! {
     static APP:RefCell<Option<App>>=const { RefCell::new(None) };
     static SYNCING:Cell<bool>=const { Cell::new(false) };
@@ -2081,11 +2095,28 @@ unsafe fn shortcut(message: &MSG) -> bool {
 
 pub fn show_fatal(error: &str) {
     unsafe {
-        ui::message(null_mut(), "Rinva", error, MB_OK | MB_ICONERROR);
+        let language = storage::read_json::<Settings>(&settings_dir().join("settings.json"))
+            .map(|s| s.language)
+            .unwrap_or_default();
+        ui::message(
+            null_mut(),
+            "Rinva",
+            &language.message(error),
+            MB_OK | MB_ICONERROR,
+        );
     }
 }
 
 pub fn run(args: Vec<OsString>) -> Result<(), String> {
+    if args.first().is_some_and(|a| a == "--smoke-test") {
+        let output = args
+            .get(1)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| "smoke-output".into());
+        std::fs::create_dir_all(&output).map_err(|e| e.to_string())?;
+        let _ = SMOKE_TRACE.set(output.join("native-trace.txt"));
+    }
+    smoke_trace("startup");
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let instance = GetModuleHandleW(null());
@@ -2101,6 +2132,7 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         paint::register(instance, Some(canvas_proc))?;
         let executable = std::env::current_exe().map_err(|e| e.to_string())?;
         let _fonts = fonts::Fonts::load(&executable)?;
+        smoke_trace("fonts loaded");
         let standalone = executable
             .file_stem()
             .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("RinvaPlayer"));
@@ -2139,14 +2171,20 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         if hwnd.is_null() {
             return Err(std::io::Error::last_os_error().to_string());
         }
+        smoke_trace("window created");
         let mut app = App::new(hwnd, project, file, play)?;
+        smoke_trace("controls created");
         if !play && !smoke {
             app.recover_previous()?;
         }
         APP.with(|slot| *slot.borrow_mut() = Some(app));
+        smoke_trace("refresh begin");
         APP.with(|slot| slot.borrow_mut().as_mut().unwrap().refresh());
+        smoke_trace("refresh done");
         ShowWindow(hwnd, SW_SHOW);
+        smoke_trace("window shown");
         UpdateWindow(hwnd);
+        smoke_trace("window painted");
         if smoke {
             let output = args
                 .get(1)
@@ -2184,7 +2222,17 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
 
 unsafe fn pump() {
     let mut msg: MSG = std::mem::zeroed();
+    let mut counts = std::collections::BTreeMap::new();
+    let mut total = 0;
     while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+        *counts
+            .entry((msg.message, GetDlgCtrlID(msg.hwnd)))
+            .or_insert(0usize) += 1;
+        total += 1;
+        if total >= 10000 {
+            smoke_trace(&format!("RUNAWAY messages: {counts:?}"));
+            break;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
@@ -2192,7 +2240,9 @@ unsafe fn pump() {
 
 unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     std::fs::create_dir_all(output).map_err(|e| e.to_string())?;
+    smoke_trace("first pump");
     pump();
+    smoke_trace("initial commands");
     let command = |id: u16| {
         SendMessageW(hwnd, WM_COMMAND, id as usize, 0);
         pump();
@@ -2260,7 +2310,9 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     if APP.with(|slot| slot.borrow().as_ref().unwrap().document.project.clone()) != original {
         return Err("Native text session undo failed".into());
     }
+    smoke_trace("polish tests");
     smoke_ui::run(hwnd, output)?;
+    smoke_trace("polish done");
     let original_dark = APP.with(|slot| slot.borrow().as_ref().unwrap().dark);
     if !original_dark {
         command(THEME);

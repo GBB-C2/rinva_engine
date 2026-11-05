@@ -138,11 +138,23 @@ pub fn connect(
                 .ok_or("Scene not found")
         })
         .transpose()?;
-    doc.change(|p| match port {
-        Port::Next => p.scenes[source].next = destination,
-        Port::Choice(i) => p.scenes[source].choices[i].target = destination.unwrap_or_default(),
+    let layout = positions(&doc.project);
+    doc.change(|p| {
+        freeze_positions(p, &layout);
+        match port {
+            Port::Next => p.scenes[source].next = destination,
+            Port::Choice(i) => p.scenes[source].choices[i].target = destination.unwrap_or_default(),
+        }
     });
     Ok(())
+}
+
+pub fn freeze_positions(project: &mut Project, points: &[Point]) {
+    for (scene, point) in project.scenes.iter_mut().zip(points) {
+        if scene.node_position.is_none() {
+            scene.node_position = Some(point.position());
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -176,6 +188,7 @@ pub struct Graph {
     pub drag: Option<Drag>,
     pub selected_port: Option<(usize, Port)>,
     pub hover: Hit,
+    pub middle_drag: bool,
 }
 impl Default for Graph {
     fn default() -> Self {
@@ -185,6 +198,7 @@ impl Default for Graph {
             drag: None,
             selected_port: None,
             hover: Hit::Empty,
+            middle_drag: false,
         }
     }
 }
@@ -299,7 +313,11 @@ impl Graph {
                     .get(scene)
                     .is_some_and(|p| p.position() != preview.position())
                 {
-                    doc.change(|p| p.scenes[scene].node_position = Some(preview.position()));
+                    let layout = positions(&doc.project);
+                    doc.change(|p| {
+                        freeze_positions(p, &layout);
+                        p.scenes[scene].node_position = Some(preview.position());
+                    });
                 }
             }
             Some(Drag::Connect { scene, port, .. }) => {

@@ -48,6 +48,7 @@ jobs:
           $process = Start-Process -FilePath target/release/rinva.exe -ArgumentList '--smoke-test', 'smoke-output' -PassThru
           if (-not $process.WaitForExit(90000)) {
             $process.Kill()
+            Get-Content smoke-output/native-trace.txt -ErrorAction SilentlyContinue
             throw 'Native smoke test timed out'
           }
           if ($process.ExitCode -ne 0) { Get-Content smoke-output/native-error.txt -ErrorAction SilentlyContinue; throw "Native smoke failed: $($process.ExitCode)" }

@@ -256,6 +256,10 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
     );
     match msg {
         WM_LBUTTONDOWN | WM_MBUTTONDOWN => {
+            if app.graph.drag.is_some() {
+                return true;
+            }
+            app.graph.middle_drag = msg == WM_MBUTTONDOWN;
             app.document.finish_edit();
             SetFocus(hwnd);
             let hit = app.graph.hit(&app.document.project, point);
@@ -319,6 +323,9 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             InvalidateRect(hwnd, null(), 0);
         }
         WM_LBUTTONUP | WM_MBUTTONUP => {
+            if app.graph.middle_drag != (msg == WM_MBUTTONUP) {
+                return true;
+            }
             if app.graph.drag.is_some() {
                 let linking = matches!(app.graph.drag, Some(Drag::Connect { .. }));
                 if let Err(error) = app.graph.commit(&mut app.document, point) {

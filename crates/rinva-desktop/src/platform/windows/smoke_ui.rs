@@ -75,7 +75,9 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     let rounded = PtInRegion(region, 0, 0) == 0 && PtInRegion(region, 24, 16) != 0;
     DeleteObject(region);
     check(rounded, "4-DIP control rounding failed")?;
+    smoke_trace("language tests");
     for lang in LANGUAGES {
+        smoke_trace(lang.name());
         language(hwnd, lang);
         APP.with(|s| fonts::verify_glyphs(s.borrow().as_ref().unwrap().resources.font))?;
         check(
@@ -114,6 +116,7 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         APP.with(|s| s.borrow().as_ref().unwrap().language) == Language::Russian,
         "Cancelling language popup committed a language",
     )?;
+    smoke_trace("node gestures");
     let canvas = handle(CANVAS);
     let start = node_point(0, None);
     pointer(canvas, WM_LBUTTONDOWN, start);
@@ -245,6 +248,7 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         a.refresh();
     });
     pump();
+    smoke_trace("scrollbar tests");
     let before_scroll = project();
     for id in [BODY, ITEMS] {
         let bar = APP.with(|s| {
