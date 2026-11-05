@@ -4,6 +4,7 @@
 mod document;
 mod model;
 mod player;
+pub mod recovery;
 pub mod storage;
 
 pub use document::Document;

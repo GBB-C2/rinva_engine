@@ -4,7 +4,7 @@ use crate::{Project, Scene};
 /// a future command log can replace this without changing the project format.
 pub struct Document {
     pub project: Project,
-    saved: Project,
+    saved: Option<Project>,
     undo: Vec<Project>,
     redo: Vec<Project>,
     edit_origin: Option<Project>,
@@ -13,7 +13,7 @@ pub struct Document {
 impl Document {
     pub fn new(project: Project) -> Self {
         Self {
-            saved: project.clone(),
+            saved: Some(project.clone()),
             project,
             undo: vec![],
             redo: vec![],
@@ -21,11 +21,16 @@ impl Document {
         }
     }
     pub fn dirty(&self) -> bool {
-        self.project != self.saved
+        self.saved.as_ref() != Some(&self.project)
+    }
+    pub fn from_unsaved(project: Project) -> Self {
+        let mut document = Self::new(project);
+        document.saved = None;
+        document
     }
     pub fn mark_saved(&mut self) {
         self.finish_edit();
-        self.saved = self.project.clone();
+        self.saved = Some(self.project.clone());
     }
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()

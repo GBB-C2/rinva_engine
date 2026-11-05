@@ -211,6 +211,63 @@ fn failed_export_does_not_publish_partial_bundle() {
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
 }
 
+#[test]
+fn recovery_keeps_drafts_and_never_overwrites_a_changed_source() {
+    use rinva_core::recovery::{self, Snapshot};
+    let temp = Temp::new();
+    let source = temp.0.join("story.rinva");
+    let original = Project::demo();
+    storage::write_json(&source, &original).unwrap();
+    let mut edited = original.clone();
+    edited.scenes[0].lines[0].text.clear(); // an incomplete draft is recoverable
+    let snapshot = Snapshot::new(
+        "test-session-1".into(),
+        edited.clone(),
+        Some(source.clone()),
+        Some(original.signature()),
+        temp.0.clone(),
+    );
+    let path = temp.0.join("session.json");
+    recovery::write(&path, &snapshot).unwrap();
+    let loaded = recovery::read(&path).unwrap();
+    assert_eq!(loaded.project, edited);
+    assert_eq!(loaded.unchanged_source(), Some(source.clone()));
+    assert!(Document::from_unsaved(loaded.project.clone()).dirty());
+    let mut external = original.clone();
+    external.title = "Изменено другим автором".into();
+    storage::write_json(&source, &external).unwrap();
+    assert_eq!(loaded.unchanged_source(), None);
+    assert_eq!(storage::read_project(&source).unwrap(), external);
+    assert_eq!(loaded.asset_root, temp.0);
+    recovery::write(&path, &snapshot).unwrap();
+    recovery::remove(&path).unwrap();
+    assert!(!path.exists());
+    assert!(!temp.0.join("session.json.bak").exists());
+}
+
+#[test]
+fn recovery_rejects_corrupt_metadata_and_supports_untitled_projects() {
+    use rinva_core::recovery::Snapshot;
+    let temp = Temp::new();
+    let mut snapshot = Snapshot::new(
+        "valid-session".into(),
+        Project::new(),
+        None,
+        None,
+        temp.0.clone(),
+    );
+    assert!(snapshot.validate().is_ok());
+    assert_eq!(snapshot.unchanged_source(), None);
+    snapshot.session_id = "../other".into();
+    assert!(snapshot.validate().is_err());
+    snapshot.session_id = "valid-session".into();
+    snapshot.version = 2;
+    assert!(snapshot.validate().is_err());
+    snapshot.version = 1;
+    snapshot.project.scenes.clear();
+    assert!(snapshot.validate().is_err());
+}
+
 #[cfg(unix)]
 #[test]
 fn symlink_asset_escape_is_rejected() {

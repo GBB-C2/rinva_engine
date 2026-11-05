@@ -3,7 +3,9 @@ name: Rust and native Windows
 on:
   push:
     branches: [main, 'codex/**']
+    paths-ignore: ['docs/screenshots/**', 'README.md', 'docs/QA.md', 'docs/ROADMAP.md']
   pull_request:
+    paths-ignore: ['docs/screenshots/**', 'README.md', 'docs/QA.md', 'docs/ROADMAP.md']
   workflow_dispatch:
 
 permissions:
