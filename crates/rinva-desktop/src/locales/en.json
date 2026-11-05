@@ -298,5 +298,7 @@
   "Добавьте варианты ответа в узел выбора.": "Add options to the choice node.",
   "Оставьте хотя бы один ответ без условия.": "Keep at least one unconditional choice.",
   "Слишком много автоматических переходов. Проверьте условия цикла.": "Too many automatic transitions. Check loop conditions.",
-  "Недопустимый путь к ресурсу: {path}": "Invalid asset path: {path}"
+  "Недопустимый путь к ресурсу: {path}": "Invalid asset path: {path}",
+  "Этот узел выполняется автоматически. Настройте его в инспекторе или соедините выходы на вкладке «Ноды».": "This node runs automatically. Configure it in the inspector or connect its outputs in the Nodes view.",
+  "Не удалось открыть ресурс {path}.": "Could not open asset {path}."
 }

@@ -1741,14 +1741,20 @@ impl App {
             let line = scene.lines.get(self.selected_item);
             (
                 scene,
-                line.map(|l| l.speaker.as_str()).unwrap_or(""),
-                if self.choices_tab {
+                if scene.kind.interactive() {
+                    line.map(|l| l.speaker.as_str()).unwrap_or("")
+                } else {
+                    ""
+                },
+                if !scene.kind.interactive() {
+                    self.t("Этот узел выполняется автоматически. Настройте его в инспекторе или соедините выходы на вкладке «Ноды».")
+                } else if self.choices_tab {
                     self.t("Варианты ответа появятся после реплик сцены.")
                 } else {
                     line.map(|l| l.text.as_str())
                         .unwrap_or(self.t("Добавьте первую реплику кнопкой «+ Реплика»."))
                 },
-                false,
+                scene.kind == rinva_core::NodeKind::End,
             )
         };
         paint::scene(

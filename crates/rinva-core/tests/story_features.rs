@@ -170,3 +170,64 @@ fn resources_cover_voice_music_effects_and_character_expressions() {
         .iter()
         .any(|i| i.field == Field::Audio && i.severity == Severity::Error));
 }
+
+#[test]
+fn bundled_trust_story_takes_both_condition_outputs() {
+    let project: Project =
+        serde_json::from_str(include_str!("../../../examples/trust.rinva")).unwrap();
+    project.check().unwrap();
+    for (choice, target, trust) in [(0, "lighthouse", 1), (1, "platform", 0)] {
+        let mut player = Player::new(&project).unwrap();
+        while matches!(player.frame(), Frame::Dialogue { .. }) {
+            player.advance().unwrap();
+        }
+        player.choose(choice).unwrap();
+        assert_eq!(player.variables()["trust"], trust);
+        assert!(matches!(player.frame(), Frame::Dialogue { scene, .. } if scene.id == target));
+        while matches!(player.frame(), Frame::Dialogue { .. }) {
+            player.advance().unwrap();
+        }
+        assert!(matches!(player.frame(), Frame::End { scene } if scene.id == "finish"));
+    }
+}
+
+#[test]
+fn corrupt_saved_variables_and_music_leave_the_player_unchanged() {
+    let project = story();
+    let mut player = Player::new(&project).unwrap();
+    player.advance().unwrap();
+    player.choose(0).unwrap();
+    let original = serde_json::to_value(player.save()).unwrap();
+    for field in ["variables", "music"] {
+        let mut corrupt = original.clone();
+        corrupt["position"][field] = match field {
+            "variables" => serde_json::json!({"unknown": 3}),
+            _ => serde_json::json!({"file": "../outside.wav", "volume": 80, "fade_ms": 600}),
+        };
+        assert!(player
+            .restore(serde_json::from_value(corrupt).unwrap())
+            .is_err());
+        assert_eq!(serde_json::to_value(player.save()).unwrap(), original);
+    }
+}
+
+#[test]
+fn inactive_node_rules_remain_drafts_until_their_type_is_enabled() {
+    let mut project = story();
+    project.scenes[0].condition = Some(Condition {
+        variable: "draft".into(),
+        comparison: Comparison::Equal,
+        value: 0,
+    });
+    project.scenes[0].assignment = Some(Assignment {
+        variable: "draft".into(),
+        operation: Operation::Set,
+        value: 0,
+    });
+    project.check().unwrap();
+    project.scenes[0].kind = NodeKind::Condition;
+    assert!(project
+        .validate()
+        .iter()
+        .any(|issue| issue.message.contains("draft")));
+}

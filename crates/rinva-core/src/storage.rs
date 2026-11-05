@@ -236,6 +236,8 @@ pub fn export_bundle(
             staging.join("THIRD_PARTY_NOTICES.txt"),
             concat!(
                 include_str!("../../../docs/THIRD_PARTY_NOTICES.txt"),
+                "\n",
+                include_str!("../../../docs/WINDOWS_MEDIA_NOTICES.txt"),
                 "\nZune-core and zune-jpeg (https://github.com/etemesi254/zune-image)\n",
                 include_str!("../../../docs/ZUNE_LICENSE_MIT.txt")
             ),

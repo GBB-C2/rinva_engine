@@ -238,6 +238,9 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
             app.reader.skip = false;
         }
         SKIP => {
+            if app.player.as_ref().is_some_and(|p| p.was_read()) {
+                app.reader.seen_before = true;
+            }
             app.reader.skip = !app.reader.skip;
             app.reader.auto = false;
             if app.reader.skip && !app.reader.seen_before {
@@ -256,6 +259,7 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
             app.reader.settings.speed =
                 [0, 20, 40, 60][app.controls.selection(id, true).unwrap_or(0).min(3)];
             app.reader.started = std::time::Instant::now();
+            app.reader.completed = None;
             app.persist_settings()?;
         }
         _ => {

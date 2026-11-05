@@ -27,6 +27,7 @@ jobs:
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo run --locked -p rinva-desktop -- --validate examples/first-light.rinva
+      - run: cargo run --locked -p rinva-desktop -- --validate examples/trust.rinva
 
   windows:
     runs-on: windows-latest

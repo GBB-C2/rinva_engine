@@ -53,9 +53,11 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
         }
     }
     let mut characters = HashSet::new();
+    let mut character_names = HashSet::new();
     for character in &project.characters {
         if character.id.is_empty()
             || !characters.insert(&character.id)
+            || !character_names.insert(&character.name)
             || character.name.trim().is_empty()
         {
             error(
@@ -116,12 +118,20 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
         for name in scene
             .condition
             .iter()
+            .filter(|_| scene.kind == NodeKind::Condition)
             .map(|c| &c.variable)
-            .chain(scene.assignment.iter().map(|a| &a.variable))
+            .chain(
+                scene
+                    .assignment
+                    .iter()
+                    .filter(|_| scene.kind == NodeKind::SetVariable)
+                    .map(|a| &a.variable),
+            )
             .chain(
                 scene
                     .choices
                     .iter()
+                    .filter(|_| scene.kind.interactive())
                     .filter_map(|c| c.condition.as_ref().map(|c| &c.variable)),
             )
         {
@@ -384,7 +394,7 @@ pub fn inspect_project(project: &Project, root: &Path) -> Vec<Issue> {
                 severity: Severity::Error,
                 scene_id,
                 field,
-                message: format!("Не удалось открыть изображение {path}.\n{error}"),
+                message: format!("Не удалось открыть ресурс {path}.\n{error}"),
             });
         }
     }

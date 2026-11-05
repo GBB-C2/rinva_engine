@@ -35,6 +35,22 @@ unsafe fn edit(id: u16, value: &str) {
 fn project() -> Project {
     APP.with(|s| s.borrow().as_ref().unwrap().document.project.clone())
 }
+unsafe fn pointer(id: u16, message: u32, at: Point) {
+    let scale = APP.with(|s| s.borrow().as_ref().unwrap().scale);
+    let x = (at.x * scale).round() as i32;
+    let y = (at.y * scale).round() as i32;
+    let packed = ((x as u16 as u32) | ((y as u16 as u32) << 16)) as isize;
+    SendMessageW(handle(id), message, 0, packed);
+    pump();
+}
+fn node_point(index: usize) -> Point {
+    APP.with(|s| {
+        let s = s.borrow();
+        let a = s.as_ref().unwrap();
+        let at = graph::positions(&a.document.project)[index];
+        a.graph.screen(Point::new(at.x + 44., at.y + 28.))
+    })
+}
 
 fn assets(root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(root.join("assets")).map_err(|e| e.to_string())?;
@@ -234,6 +250,57 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     )?;
     command(hwnd, REDO);
     paint::capture(hwnd, &output.join("studio-nodes-ru.png"))?;
+    // Select with the actual Control modifier; move the pair through the canvas callback.
+    APP.with(|s| s.borrow_mut().as_mut().unwrap().graph.selection.clear());
+    let mut keys = [0u8; 256];
+    GetKeyboardState(keys.as_mut_ptr());
+    let mut modified = keys;
+    modified[VK_CONTROL as usize] |= 0x80;
+    SetKeyboardState(modified.as_ptr());
+    for index in [0, 4] {
+        pointer(CANVAS, WM_LBUTTONDOWN, node_point(index));
+        pointer(CANVAS, WM_LBUTTONUP, node_point(index));
+    }
+    SetKeyboardState(keys.as_ptr());
+    check(
+        APP.with(|s| s.borrow().as_ref().unwrap().graph.selection.len()) == 2,
+        "Control-click did not select two nodes",
+    )?;
+    let before = project();
+    let start = node_point(0);
+    let finish = Point::new(start.x + 28., start.y + 20.);
+    pointer(CANVAS, WM_LBUTTONDOWN, start);
+    pointer(CANVAS, WM_MOUSEMOVE, finish);
+    check(project() == before, "Group preview mutated the document")?;
+    pointer(CANVAS, WM_LBUTTONUP, finish);
+    let after = project();
+    check(
+        after.scenes[0].node_position != before.scenes[0].node_position
+            && after.scenes[4].node_position != before.scenes[4].node_position
+            && after.scenes[1] == before.scenes[1],
+        "Group drag moved the wrong nodes",
+    )?;
+    command(hwnd, UNDO);
+    check(project() == before, "Group drag was not one undo step")?;
+    let old_pan = APP.with(|s| s.borrow().as_ref().unwrap().graph.pan);
+    let size = APP.with(|s| s.borrow().as_ref().unwrap().canvas_size());
+    pointer(
+        CANVAS,
+        WM_LBUTTONDOWN,
+        Point::new(size.x - 40., size.y - 40.),
+    );
+    pointer(CANVAS, WM_LBUTTONUP, Point::new(size.x - 40., size.y - 40.));
+    check(
+        APP.with(|s| s.borrow().as_ref().unwrap().graph.pan) != old_pan && project() == before,
+        "Minimap did not navigate without editing the story",
+    )?;
+    command(hwnd, studio::MINIMAP);
+    check(
+        !APP.with(|s| s.borrow().as_ref().unwrap().graph.minimap),
+        "Minimap hide failed",
+    )?;
+    command(hwnd, studio::MINIMAP);
+    command(hwnd, GRAPH_FIT);
     combo(hwnd, studio::LEFT_WIDTH, 2);
     combo(hwnd, studio::RIGHT_WIDTH, 2);
     command(hwnd, studio::RESET_LAYOUT);
