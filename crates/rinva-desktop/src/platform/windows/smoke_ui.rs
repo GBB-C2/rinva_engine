@@ -24,6 +24,22 @@ fn packed(x: i32, y: i32) -> isize {
 /// Check real child client rectangles after theme changes; story text remains native.
 pub unsafe fn verify_preview_capture(hwnd: HWND, path: &Path) -> Result<(), String> {
     let image = image::open(path).map_err(|e| e.to_string())?.into_rgb8();
+    // Child windows must appear at their real client positions, even though
+    // WM_PRINT also traverses the top-level window's nonclient frame.
+    let mut button: RECT = std::mem::zeroed();
+    GetWindowRect(handle(SAVE), &mut button);
+    let mut point = POINT {
+        x: button.left + 6,
+        y: button.top + 6,
+    };
+    ScreenToClient(hwnd, &mut point);
+    let palette = APP.with(|s| s.borrow().as_ref().unwrap().palette);
+    let rgb = |c: u32| [c as u8, (c >> 8) as u8, (c >> 16) as u8];
+    let pixel = image.get_pixel(point.x as u32, point.y as u32).0;
+    check(
+        pixel == rgb(palette.field) || pixel == rgb(palette.selected),
+        "Screenshot shifted child controls away from their client positions",
+    )?;
     for id in [CANVAS, BODY] {
         let child = handle(id);
         let mut rect: RECT = std::mem::zeroed();

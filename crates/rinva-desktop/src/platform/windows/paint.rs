@@ -248,11 +248,24 @@ pub unsafe fn capture(hwnd: HWND, path: &Path) -> Result<(), String> {
         null_mut(),
         RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
     );
+    // WM_PRINT positions children in window coordinates. Render its nonclient
+    // frame too, offset outside this client-sized bitmap, so all controls retain
+    // their actual client coordinates instead of shifting by the title bar.
+    let mut window: RECT = std::mem::zeroed();
+    GetWindowRect(hwnd, &mut window);
+    let mut client = POINT { x: 0, y: 0 };
+    ClientToScreen(hwnd, &mut client);
+    SetViewportOrgEx(
+        memory,
+        window.left - client.x,
+        window.top - client.y,
+        null_mut(),
+    );
     SendMessageW(
         hwnd,
         WM_PRINT,
         memory as usize,
-        (PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND) as isize,
+        (PRF_NONCLIENT | PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND) as isize,
     );
     GdiFlush();
     SelectObject(memory, old);
