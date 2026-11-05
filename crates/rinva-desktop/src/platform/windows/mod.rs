@@ -1,4 +1,6 @@
 mod fonts;
+mod navigation;
+mod navigation_smoke;
 mod nodes;
 mod paint;
 mod recovery;
@@ -187,6 +189,7 @@ struct App {
     language: Language,
     graph: Graph,
     graph_mode: bool,
+    navigation: navigation::Navigation,
     document: Document,
     file: Option<PathBuf>,
     asset_root: PathBuf,
@@ -278,6 +281,7 @@ impl App {
             WS_TABSTOP,
             font,
         )?;
+        navigation::create(&mut controls, hwnd, &resources)?;
         let player = if player_only {
             Some(Player::new(&project)?)
         } else {
@@ -295,6 +299,7 @@ impl App {
             language,
             graph: Graph::default(),
             graph_mode: false,
+            navigation: navigation::Navigation::default(),
             document: Document::new(project),
             file,
             asset_root,
@@ -515,10 +520,12 @@ impl App {
             let cw = right - center - 16;
             let preview_h = (cw * 9 / 16).min(h - 360).max(180);
             place(VIEW_PREVIEW, center, 84, 112, 28);
-            place(VIEW_NODES, center + 120, 84, 88, 28);
-            place(ZOOM_OUT, center + 220, 84, 30, 28);
-            place(ZOOM_LABEL, center + 256, 90, 58, 20);
-            place(ZOOM_IN, center + 314, 84, 30, 28);
+            place(VIEW_NODES, center + 120, 84, 78, 28);
+            place(navigation::SEARCH, center + 206, 84, 78, 28);
+            place(navigation::PROBLEMS, center + 292, 84, 116, 28);
+            place(ZOOM_OUT, center, 120, 30, 28);
+            place(ZOOM_LABEL, center + 36, 126, 58, 20);
+            place(ZOOM_IN, center + 94, 120, 30, 28);
             place(PREVIEW_SCENE, center + cw - 94, 84, 94, 28);
             place(CANVAS, center, 120, cw, preview_h);
             let tabs_y = 120 + preview_h + 16;
@@ -551,7 +558,7 @@ impl App {
                 place(BODY, right + 16, 376, 268, h - 510);
             }
             if self.graph_mode {
-                place(CANVAS, center, 120, cw, h - 210);
+                place(CANVAS, center, 156, cw, h - 246);
                 for id in [TAB_LINES, TAB_CHOICES, ITEMS, DELETE_ITEM, UP, DOWN] {
                     self.controls.show(id, false);
                 }
@@ -563,6 +570,7 @@ impl App {
             place(LABEL_NEXT, right + 16, h - 114, 268, 20);
             place(NEXT_SCENE, right + 16, h - 88, 268, 220);
         }
+        navigation::layout(self, w, h);
         for id in [SCENES, ITEMS, GAME_CHOICES] {
             SendMessageW(
                 self.controls.get(id),
@@ -774,7 +782,8 @@ impl App {
             .unwrap_or(0);
         self.controls
             .fill_list(NEXT_SCENE, &destinations, next, true);
-        self.controls.enable(NEXT_SCENE, scene.choices.is_empty());
+        self.controls
+            .enable(NEXT_SCENE, scene.choices.is_empty() || scene.next.is_some());
         let target = scene
             .choices
             .get(self.selected_item)
@@ -852,6 +861,7 @@ impl App {
         );
         self.load_images();
         self.update_title();
+        navigation::refresh(self);
         self.layout();
     }
 
@@ -941,6 +951,7 @@ impl App {
             }
             _ => {}
         }
+        self.navigation.changed();
         self.status = "Есть несохранённые изменения · Ctrl+S — сохранить".into();
         self.controls.enable(UNDO, self.document.can_undo());
         self.update_title();
@@ -1007,6 +1018,9 @@ impl App {
     }
 
     unsafe fn command(&mut self, id: u16, notification: u16) -> Result<(), String> {
+        if navigation::command(self, id, notification) {
+            return Ok(());
+        }
         if matches!(id, PROJECT_TITLE | SCENE_NAME | SPEAKER | BODY) {
             match notification as u32 {
                 EN_SETFOCUS => {
@@ -1133,9 +1147,11 @@ impl App {
                 }
             }
             VIEW_PREVIEW => {
+                self.navigation.mode = None;
                 self.graph_mode = false;
             }
             VIEW_NODES => {
+                self.navigation.mode = None;
                 self.graph_mode = true;
                 self.status=self.t("Ноды: перетащите выход к входу · колесо — прокрутка · Ctrl+колесо — масштаб · Esc — отмена").into();
                 self.layout();
@@ -1374,30 +1390,10 @@ impl App {
                 }
             }),
             PLAY | PREVIEW_SCENE => {
-                let errors = self.document.project.validate();
-                if let Some(issue) = errors.iter().find(|i| i.severity == Severity::Error) {
-                    if let Some(scene) = &issue.scene_id {
-                        if let Some(i) = self
-                            .document
-                            .project
-                            .scenes
-                            .iter()
-                            .position(|s| &s.id == scene)
-                        {
-                            self.selected_scene = i;
-                        }
-                    }
-                    self.refresh();
-                    return Err(errors
-                        .iter()
-                        .filter(|i| i.severity == Severity::Error)
-                        .map(|i| i.message.clone())
-                        .collect::<Vec<_>>()
-                        .join("\n"));
+                if navigation::preflight(self) {
+                    return Ok(());
                 }
-                for asset in storage::assets(&self.document.project) {
-                    storage::resolve_asset(&self.root(), asset)?;
-                }
+                self.navigation.mode = None;
                 self.player = Some(if id == PREVIEW_SCENE {
                     Player::from_scene(&self.document.project, &self.scene().id)?
                 } else {
@@ -1453,7 +1449,9 @@ impl App {
                 if self.export_result.is_some() {
                     return Ok(());
                 }
-                self.document.project.check()?;
+                if navigation::preflight(self) {
+                    return Ok(());
+                }
                 if !self.save(false)? {
                     return Ok(());
                 }
@@ -1638,8 +1636,11 @@ impl App {
         let disabled = draw.itemState & ODS_DISABLED != 0;
         let active = (id == TAB_LINES && !self.choices_tab)
             || (id == TAB_CHOICES && self.choices_tab)
-            || (id == VIEW_NODES && self.graph_mode)
-            || (id == VIEW_PREVIEW && !self.graph_mode);
+            || (id == VIEW_NODES && self.graph_mode && self.navigation.mode.is_none())
+            || (id == VIEW_PREVIEW && !self.graph_mode && self.navigation.mode.is_none())
+            || (id == navigation::SEARCH && self.navigation.mode == Some(navigation::Mode::Search))
+            || (id == navigation::PROBLEMS
+                && self.navigation.mode == Some(navigation::Mode::Problems));
         let primary = matches!(id, PLAY | ADVANCE);
         let mut pointer: POINT = std::mem::zeroed();
         GetCursorPos(&mut pointer);
@@ -1697,6 +1698,41 @@ impl App {
         } else {
             ui::window_text(draw.hwndItem)
         };
+        if id == navigation::RESULTS {
+            let (heading, body) = value.split_once('\n').unwrap_or((&value, ""));
+            let px = |n: f32| (n * self.scale).round() as i32;
+            let r = draw.rcItem;
+            ui::text(
+                draw.hDC,
+                heading,
+                RECT {
+                    left: r.left + px(10.),
+                    top: r.top + px(6.),
+                    right: r.right - px(8.),
+                    bottom: r.top + px(28.),
+                },
+                self.palette.text,
+                self.resources.font,
+                DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS,
+            );
+            ui::text(
+                draw.hDC,
+                body,
+                RECT {
+                    left: r.left + px(10.),
+                    top: r.top + px(30.),
+                    right: r.right - px(8.),
+                    bottom: r.bottom - px(4.),
+                },
+                self.palette.muted,
+                self.resources.small,
+                DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS,
+            );
+            if draw.itemState & ODS_FOCUS != 0 {
+                DrawFocusRect(draw.hDC, &draw.rcItem);
+            }
+            return;
+        }
         let mut rect = draw.rcItem;
         rect.left += (10. * self.scale) as i32;
         rect.right -= (8. * self.scale) as i32;
@@ -1854,8 +1890,10 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                 if let Some(app) = slot.as_ref() {
                     let dc = w as HDC;
                     SetTextColor(dc, app.palette.text);
-                    let field =
-                        msg != WM_CTLCOLORSTATIC || l as HWND == app.controls.get(TRANSCRIPT);
+                    let field = msg != WM_CTLCOLORSTATIC
+                        || [TRANSCRIPT, navigation::DETAIL]
+                            .iter()
+                            .any(|id| l as HWND == app.controls.get(*id));
                     SetBkColor(
                         dc,
                         if field {
@@ -1906,6 +1944,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         WM_TIMER => {
             APP.with(|slot|if let Ok(mut slot)=slot.try_borrow_mut(){if let Some(app)=slot.as_mut(){
             app.autosave_tick();
+            navigation::tick(app);
             app.controls.sync_scrolls();
             if let Some(result)=app.export_result.as_ref().and_then(|rx|rx.try_recv().ok()){
                 app.export_result=None;
@@ -2053,6 +2092,10 @@ unsafe fn shortcut(message: &MSG) -> bool {
     if message.message != WM_KEYDOWN {
         return false;
     }
+    // Enter/Escape belong to the native IME while its composition is active.
+    if ui::composing(GetFocus()) {
+        return false;
+    }
     let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
     let shift = GetKeyState(VK_SHIFT as i32) < 0;
     let key = message.wParam as u16;
@@ -2060,9 +2103,17 @@ unsafe fn shortcut(message: &MSG) -> bool {
         let slot = slot.borrow();
         let app = slot.as_ref()?;
         let focus = GetFocus();
-        let text_entry = [PROJECT_TITLE, SCENE_NAME, SPEAKER, BODY, TRANSCRIPT]
-            .iter()
-            .any(|id| focus == app.controls.get(*id));
+        let text_entry = [
+            PROJECT_TITLE,
+            SCENE_NAME,
+            SPEAKER,
+            BODY,
+            TRANSCRIPT,
+            navigation::QUERY,
+            navigation::DETAIL,
+        ]
+        .iter()
+        .any(|id| focus == app.controls.get(*id));
         let command = if app.player.is_some() {
             match key {
                 VK_ESCAPE if !app.player_only => STOP,
@@ -2078,8 +2129,34 @@ unsafe fn shortcut(message: &MSG) -> bool {
                 VK_SPACE if focus == app.hwnd => ADVANCE,
                 _ => return None,
             }
+        } else if app.navigation.mode.is_some()
+            && !ctrl
+            && (key == VK_ESCAPE
+                || key == VK_F3
+                || key == VK_RETURN
+                    && [navigation::QUERY, navigation::RESULTS]
+                        .iter()
+                        .any(|id| focus == app.controls.get(*id)))
+        {
+            if key == VK_ESCAPE {
+                if focus == app.controls.get(navigation::FILTER)
+                    && SendMessageW(focus, CB_GETDROPPEDSTATE, 0, 0) != 0
+                {
+                    return None;
+                }
+                navigation::CLOSE
+            } else if key == VK_F3 {
+                if shift {
+                    navigation::PREVIOUS
+                } else {
+                    navigation::NEXT
+                }
+            } else {
+                navigation::GO
+            }
         } else if ctrl {
             match key {
+                0x46 => navigation::SEARCH,
                 0x53 => {
                     if shift {
                         SAVE_AS
@@ -2106,6 +2183,8 @@ unsafe fn shortcut(message: &MSG) -> bool {
                 }
                 _ => return None,
             }
+        } else if key == VK_F8 {
+            navigation::PROBLEMS
         } else if key == VK_F5 {
             PLAY
         } else {
@@ -2341,6 +2420,7 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     smoke_trace("polish tests");
     smoke_ui::run(hwnd, output)?;
     smoke_trace("polish done");
+    navigation_smoke::run(hwnd, output)?;
     let original_dark = APP.with(|slot| slot.borrow().as_ref().unwrap().dark);
     if !original_dark {
         command(THEME);
@@ -2399,6 +2479,6 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
         command(THEME);
     }
     APP.with(|slot| slot.borrow_mut().as_mut().unwrap().clear_recovery())?;
-    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, Unicode edit notifications and grouped undo, scene command, undo/redo, dropdown dismissal, live theme switch, playback choice and rollback, project roundtrip, timer-driven background autosave, live-session isolation, crash recovery, backup fallback, asynchronous discard, rounded controls, five live languages, node drag/cancel/capture loss, graph connections/undo, arrange/zoom, native scrollbar dragging/keyboard/wheel, screenshots.\n").map_err(|e|e.to_string())?;
+    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, Unicode edit notifications and grouped undo, scene command, undo/redo, dropdown dismissal, live theme switch, playback choice and rollback, project roundtrip, timer-driven background autosave, live-session isolation, crash recovery, backup fallback, asynchronous discard, rounded controls, five live languages, node drag/cancel/capture loss, graph connections/undo, arrange/zoom, native scrollbar dragging/keyboard/wheel, Unicode search selection, stale-result protection, search scopes, diagnostics navigation and repair, warning-only playback, screenshots.\n").map_err(|e|e.to_string())?;
     Ok(())
 }

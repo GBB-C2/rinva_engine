@@ -174,6 +174,7 @@ impl Controls {
                 scale: self.scale,
                 list: class == "LISTBOX",
                 multiline: style & ES_MULTILINE as u32 != 0,
+                composing: false,
             }));
             if SetWindowSubclass(handle, Some(field_proc), 2, data as usize) == 0 {
                 drop(Box::from_raw(data));
@@ -578,6 +579,12 @@ struct FieldStyle {
     scale: f32,
     list: bool,
     multiline: bool,
+    composing: bool,
+}
+pub unsafe fn composing(hwnd: HWND) -> bool {
+    let mut data = 0;
+    GetWindowSubclass(hwnd, Some(field_proc), 2, &mut data) != 0
+        && (*(data as *const FieldStyle)).composing
 }
 unsafe extern "system" fn field_proc(
     hwnd: HWND,
@@ -591,6 +598,11 @@ unsafe extern "system" fn field_proc(
         RemoveWindowSubclass(hwnd, Some(field_proc), 2);
         drop(Box::from_raw(data as *mut FieldStyle));
         return DefSubclassProc(hwnd, msg, w, l);
+    }
+    if msg == WM_IME_STARTCOMPOSITION {
+        (*(data as *mut FieldStyle)).composing = true;
+    } else if msg == WM_IME_ENDCOMPOSITION || msg == WM_KILLFOCUS {
+        (*(data as *mut FieldStyle)).composing = false;
     }
     if msg == WM_MOUSEWHEEL {
         let style = &*(data as *const FieldStyle);

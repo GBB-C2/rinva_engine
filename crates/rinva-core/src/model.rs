@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 
 pub const FORMAT_VERSION: u32 = 1;
 
@@ -59,9 +58,25 @@ pub enum Severity {
     Warning,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Field {
+    Project,
+    ProjectTitle,
+    Scene,
+    SceneName,
+    Speaker(usize),
+    Dialogue(usize),
+    ChoiceText(usize),
+    ChoiceTarget(usize),
+    NextScene,
+    Background,
+    Portrait,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Issue {
     pub severity: Severity,
+    pub field: Field,
     pub scene_id: Option<String>,
     pub message: String,
 }
@@ -117,132 +132,7 @@ impl Project {
     }
 
     pub fn validate(&self) -> Vec<Issue> {
-        let mut issues = Vec::new();
-        let mut error = |scene_id: Option<String>, message: String| {
-            issues.push(Issue {
-                severity: Severity::Error,
-                scene_id,
-                message,
-            });
-        };
-        if self.format_version != FORMAT_VERSION {
-            error(
-                None,
-                format!("Неподдерживаемая версия проекта: {}", self.format_version),
-            );
-        }
-        if self.id.trim().is_empty() {
-            error(None, "У проекта отсутствует идентификатор.".into());
-        }
-        if self.title.trim().is_empty() {
-            error(None, "Введите название новеллы.".into());
-        }
-        if self.scene(&self.start_scene).is_none() {
-            error(None, "Стартовая сцена не найдена.".into());
-        }
-        let mut ids = HashSet::new();
-        for scene in &self.scenes {
-            let id = Some(scene.id.clone());
-            if scene.id.trim().is_empty() || !ids.insert(&scene.id) {
-                error(
-                    id.clone(),
-                    "Пустой или повторяющийся идентификатор сцены.".into(),
-                );
-            }
-            if scene.name.trim().is_empty() {
-                error(id.clone(), "Введите название сцены.".into());
-            }
-            for line in &scene.lines {
-                if line.text.trim().is_empty() {
-                    error(
-                        id.clone(),
-                        format!("В сцене «{}» есть пустая реплика.", scene.name),
-                    );
-                }
-                if line.text.chars().count() > 4000 {
-                    error(
-                        id.clone(),
-                        "Разделите длинную реплику: максимум 4000 символов.".into(),
-                    );
-                }
-            }
-            for choice in &scene.choices {
-                if choice.text.trim().is_empty() {
-                    error(id.clone(), "Введите текст варианта ответа.".into());
-                }
-                if self.scene(&choice.target).is_none() {
-                    error(
-                        id.clone(),
-                        format!(
-                            "У ответа «{}» нет существующей сцены назначения.",
-                            choice.text
-                        ),
-                    );
-                }
-            }
-            if let Some(next) = &scene.next {
-                if self.scene(next).is_none() {
-                    error(
-                        id.clone(),
-                        format!("Переход из «{}» ведёт в отсутствующую сцену.", scene.name),
-                    );
-                }
-                if !scene.choices.is_empty() {
-                    error(
-                        id.clone(),
-                        "У сцены одновременно заданы варианты ответа и автоматический переход."
-                            .into(),
-                    );
-                }
-            }
-            for path in [&scene.background, &scene.portrait].into_iter().flatten() {
-                if !crate::storage::is_safe_asset_path(path) {
-                    error(
-                        id.clone(),
-                        format!("Недопустимый путь к изображению: {path}"),
-                    );
-                }
-            }
-        }
-        // Empty automatic cycles would otherwise spin without waiting for input.
-        for initial in &self.scenes {
-            let mut visited = HashSet::new();
-            let mut current = Some(initial);
-            while let Some(scene) = current {
-                if !scene.lines.is_empty() || !scene.choices.is_empty() {
-                    break;
-                }
-                if !visited.insert(&scene.id) {
-                    error(
-                        Some(initial.id.clone()),
-                        "Цикл переходов без реплик или выбора.".into(),
-                    );
-                    break;
-                }
-                current = scene.next.as_deref().and_then(|id| self.scene(id));
-            }
-        }
-        let mut reachable = HashSet::new();
-        let mut pending = vec![self.start_scene.as_str()];
-        while let Some(id) = pending.pop() {
-            if !reachable.insert(id) {
-                continue;
-            }
-            if let Some(scene) = self.scene(id) {
-                pending.extend(scene.next.iter().map(String::as_str));
-                pending.extend(scene.choices.iter().map(|choice| choice.target.as_str()));
-            }
-        }
-        for scene in &self.scenes {
-            if !reachable.contains(scene.id.as_str()) {
-                issues.push(Issue {
-                    severity: Severity::Warning,
-                    scene_id: Some(scene.id.clone()),
-                    message: format!("Сцена «{}» недоступна от начала истории.", scene.name),
-                });
-            }
-        }
-        issues
+        crate::diagnostics::validate(self)
     }
 
     pub fn check(&self) -> Result<(), String> {

@@ -18,10 +18,29 @@ fn main() {
             eprintln!("Usage: rinva --validate path/to/story.rinva");
             std::process::exit(2);
         };
-        match rinva_core::storage::read_project(std::path::Path::new(path)).and_then(|p| p.check())
-        {
-            Ok(()) => {
-                println!("Project is valid");
+        let path = std::path::Path::new(path);
+        match rinva_core::storage::read_project(path) {
+            Ok(project) => {
+                let root = path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(std::path::Path::new("."));
+                let issues = rinva_core::inspect_project(&project, root);
+                for issue in &issues {
+                    eprintln!(
+                        "{:?} [{}]: {}",
+                        issue.severity,
+                        issue.scene_id.as_deref().unwrap_or("project"),
+                        issue.message
+                    );
+                }
+                if issues
+                    .iter()
+                    .any(|i| i.severity == rinva_core::Severity::Error)
+                {
+                    std::process::exit(1);
+                }
+                println!("Project is valid ({} warnings)", issues.len());
                 return;
             }
             Err(error) => {
