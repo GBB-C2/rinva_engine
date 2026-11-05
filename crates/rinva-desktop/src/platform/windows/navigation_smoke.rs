@@ -187,6 +187,28 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         )?;
         paint::capture(hwnd, &output.join(file))?;
     }
+    language(hwnd, Language::Japanese);
+    SetWindowPos(
+        hwnd,
+        null_mut(),
+        0,
+        0,
+        1120,
+        760,
+        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+    );
+    pump();
+    paint::capture(hwnd, &output.join("search-small-ja.png"))?;
+    SetWindowPos(
+        hwnd,
+        null_mut(),
+        0,
+        0,
+        1440,
+        960,
+        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+    );
+    pump();
     language(hwnd, Language::Russian);
     filter(hwnd, 2);
     check(
@@ -246,8 +268,38 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         APP.with(|s| s.borrow().as_ref().unwrap().selected_item) == 1 && GetFocus() == handle(BODY),
         "Diagnostic did not focus the empty dialogue",
     )?;
-    SetWindowTextW(handle(BODY), wide("Исправленная реплика.").as_ptr());
+    command(hwnd, PROBLEMS);
+    SendMessageW(handle(RESULTS), LB_SETCURSEL, 0, 0);
+    SendMessageW(
+        hwnd,
+        WM_COMMAND,
+        RESULTS as usize | ((LBN_SELCHANGE as usize) << 16),
+        0,
+    );
     pump();
+    SetFocus(handle(BODY));
+    pump();
+    // WM_SETTEXT deliberately sends no EN_CHANGE for a multiline EDIT. Exercise
+    // the actual native insertion path used by typing/paste, including undo.
+    SendMessageW(handle(BODY), EM_SETSEL, 0, -1);
+    SendMessageW(
+        handle(BODY),
+        EM_REPLACESEL,
+        1,
+        wide("Исправленная реплика.").as_ptr() as isize,
+    );
+    pump();
+    check(
+        project().scenes[0].lines[1].text == "Исправленная реплика.",
+        "Native multiline edit did not reach the story",
+    )?;
+    std::thread::sleep(std::time::Duration::from_millis(220));
+    SendMessageW(hwnd, WM_TIMER, 1, 0);
+    pump();
+    check(
+        GetFocus() == handle(BODY) && SendMessageW(handle(RESULTS), LB_GETCOUNT, 0, 0) == 4,
+        "Live diagnostics did not update or stole edit focus",
+    )?;
     key(handle(BODY), VK_F8)?;
     filter(hwnd, 1);
     command(hwnd, GO);
