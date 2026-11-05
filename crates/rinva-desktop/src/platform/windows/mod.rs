@@ -1695,6 +1695,37 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     if !equal {
         return Err("Native undo/redo failed".into());
     }
+    APP.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let app = slot.as_mut().unwrap();
+        app.selected_scene = 0;
+        app.selected_item = 0;
+        app.refresh();
+    });
+    pump();
+    let speaker = APP.with(|slot| slot.borrow().as_ref().unwrap().controls.get(SPEAKER));
+    SetFocus(speaker);
+    pump();
+    SetWindowTextW(speaker, wide("Проверка ввода — 海").as_ptr());
+    pump();
+    if APP.with(|slot| {
+        slot.borrow().as_ref().unwrap().document.project.scenes[0].lines[0]
+            .speaker
+            .clone()
+    }) != "Проверка ввода — 海"
+    {
+        return Err("Native Unicode editing notification failed".into());
+    }
+    SetFocus(hwnd);
+    pump();
+    command(UNDO);
+    if APP.with(|slot| slot.borrow().as_ref().unwrap().document.project.clone()) != original {
+        return Err("Native text session undo failed".into());
+    }
+    let original_dark = APP.with(|slot| slot.borrow().as_ref().unwrap().dark);
+    if !original_dark {
+        command(THEME);
+    }
     command(THEME);
     UpdateWindow(hwnd);
     pump();
@@ -1703,6 +1734,17 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     UpdateWindow(hwnd);
     pump();
     paint::capture(hwnd, &output.join("editor-dark.png"))?;
+    command(TAB_CHOICES);
+    let target = APP.with(|slot| slot.borrow().as_ref().unwrap().controls.get(TARGET));
+    SendMessageW(target, CB_SHOWDROPDOWN, 1, 0);
+    pump();
+    paint::capture(hwnd, &output.join("choices-dropdown.png"))?;
+    SendMessageW(target, CB_SHOWDROPDOWN, 0, 0);
+    pump();
+    if APP.with(|slot| slot.borrow().as_ref().unwrap().document.project.clone()) != original {
+        return Err("Dismissing a dropdown changed the document".into());
+    }
+    command(TAB_LINES);
     command(PLAY);
     command(ADVANCE);
     command(ADVANCE);
@@ -1732,6 +1774,9 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     if storage::read_project(&path)? != original {
         return Err("Native project roundtrip failed".into());
     }
-    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, scene command, undo/redo, live theme switch, playback choice and rollback, project roundtrip, screenshots.\n").map_err(|e|e.to_string())?;
+    if !original_dark {
+        command(THEME);
+    }
+    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, Unicode edit notifications and grouped undo, scene command, undo/redo, dropdown dismissal, live theme switch, playback choice and rollback, project roundtrip, screenshots.\n").map_err(|e|e.to_string())?;
     Ok(())
 }
