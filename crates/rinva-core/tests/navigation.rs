@@ -43,6 +43,7 @@ fn scopes_limits_and_read_only_search_are_predictable() {
     p.scenes[0].lines[0].text = "find find find".into();
     let target = p.scenes[0].id.clone();
     p.scenes[0].choices.push(Choice {
+        condition: None,
         text: "find".into(),
         target,
     });

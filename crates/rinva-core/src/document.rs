@@ -94,6 +94,7 @@ impl Document {
         if self.project.scenes.iter().any(|other| {
             other.id != scene.id
                 && (other.next.as_ref() == Some(&scene.id)
+                    || other.otherwise.as_ref() == Some(&scene.id)
                     || other.choices.iter().any(|c| c.target == scene.id))
         }) {
             return Err("На эту сцену ведут переходы. Сначала измените их назначения.".into());

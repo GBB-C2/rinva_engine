@@ -1,6 +1,6 @@
 //! Platform-independent graph geometry and editing commands. Coordinates are logical pixels.
-use rinva_core::{Document, NodePosition, Project, Scene};
-use std::collections::{HashMap, VecDeque};
+use rinva_core::{Document, NodeKind, NodePosition, Project, Scene};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 pub const NODE_WIDTH: f32 = 224.;
 pub const HEADER: f32 = 72.;
@@ -31,10 +31,15 @@ impl From<NodePosition> for Point {
 pub enum Port {
     Next,
     Choice(usize),
+    Otherwise,
 }
 
 pub fn ports(scene: &Scene) -> Vec<Port> {
-    if scene.choices.is_empty() {
+    if scene.kind == NodeKind::End {
+        vec![]
+    } else if scene.kind == NodeKind::Condition {
+        vec![Port::Next, Port::Otherwise]
+    } else if !scene.kind.interactive() || scene.choices.is_empty() {
         vec![Port::Next]
     } else {
         (0..scene.choices.len()).map(Port::Choice).collect()
@@ -43,6 +48,7 @@ pub fn ports(scene: &Scene) -> Vec<Port> {
 pub fn target(scene: &Scene, port: Port) -> Option<&str> {
     match port {
         Port::Next => scene.next.as_deref(),
+        Port::Otherwise => scene.otherwise.as_deref(),
         Port::Choice(i) => scene
             .choices
             .get(i)
@@ -51,7 +57,7 @@ pub fn target(scene: &Scene, port: Port) -> Option<&str> {
     }
 }
 pub fn height(scene: &Scene) -> f32 {
-    HEADER + PORT_STEP * scene.choices.len().max(1) as f32 + 12.
+    HEADER + PORT_STEP * ports(scene).len().max(1) as f32 + 12.
 }
 pub fn output(p: Point, port: Port) -> Point {
     Point::new(
@@ -60,6 +66,7 @@ pub fn output(p: Point, port: Port) -> Point {
             + PORT_STEP
                 * match port {
                     Port::Next => 0,
+                    Port::Otherwise => 1,
                     Port::Choice(i) => i,
                 } as f32
             + PORT_STEP / 2.,
@@ -146,6 +153,7 @@ pub fn connect(
         freeze_positions(p, &layout);
         match port {
             Port::Next => p.scenes[source].next = destination,
+            Port::Otherwise => p.scenes[source].otherwise = destination,
             Port::Choice(i) => p.scenes[source].choices[i].target = destination.unwrap_or_default(),
         }
     });
@@ -162,6 +170,16 @@ pub fn freeze_positions(project: &mut Project, points: &[Point]) {
 
 #[derive(Clone, Debug)]
 pub enum Drag {
+    MoveMany {
+        origins: Vec<(usize, Point)>,
+        start: Point,
+        delta: Point,
+    },
+    Marquee {
+        start: Point,
+        pointer: Point,
+        original: BTreeSet<String>,
+    },
     Move {
         scene: usize,
         offset: Point,
@@ -192,6 +210,8 @@ pub struct Graph {
     pub selected_port: Option<(usize, Port)>,
     pub hover: Hit,
     pub middle_drag: bool,
+    pub selection: BTreeSet<String>,
+    pub minimap: bool,
 }
 impl Default for Graph {
     fn default() -> Self {
@@ -202,6 +222,8 @@ impl Default for Graph {
             selected_port: None,
             hover: Hit::Empty,
             middle_drag: false,
+            selection: BTreeSet::new(),
+            minimap: true,
         }
     }
 }
@@ -258,6 +280,13 @@ impl Graph {
                 *p = preview;
             }
         }
+        if let Some(Drag::MoveMany { origins, delta, .. }) = &self.drag {
+            for &(i, p) in origins {
+                if let Some(target) = points.get_mut(i) {
+                    *target = Point::new(p.x + delta.x, p.y + delta.y);
+                }
+            }
+        }
         points
     }
     pub fn hit(&self, project: &Project, at: Point) -> Hit {
@@ -290,6 +319,10 @@ impl Graph {
     pub fn move_pointer(&mut self, at: Point) {
         let world = self.world(at);
         match &mut self.drag {
+            Some(Drag::MoveMany { start, delta, .. }) => {
+                *delta = Point::new((world.x - start.x).round(), (world.y - start.y).round());
+            }
+            Some(Drag::Marquee { pointer, .. }) => *pointer = world,
             Some(Drag::Move {
                 offset, preview, ..
             }) => {
@@ -311,6 +344,37 @@ impl Graph {
     pub fn commit(&mut self, doc: &mut Document, at: Point) -> Result<(), String> {
         let hit = self.hit(&doc.project, at);
         match self.drag.take() {
+            Some(Drag::MoveMany { origins, delta, .. }) => {
+                if delta.x != 0. || delta.y != 0. {
+                    let layout = positions(&doc.project);
+                    doc.change(|p| {
+                        freeze_positions(p, &layout);
+                        for (i, origin) in origins {
+                            if let Some(s) = p.scenes.get_mut(i) {
+                                s.node_position = Some(
+                                    Point::new(origin.x + delta.x, origin.y + delta.y).position(),
+                                );
+                            }
+                        }
+                    });
+                }
+            }
+            Some(Drag::Marquee {
+                start,
+                pointer,
+                mut original,
+            }) => {
+                for (s, p) in doc.project.scenes.iter().zip(positions(&doc.project)) {
+                    if p.x + NODE_WIDTH >= start.x.min(pointer.x)
+                        && p.x <= start.x.max(pointer.x)
+                        && p.y + height(s) >= start.y.min(pointer.y)
+                        && p.y <= start.y.max(pointer.y)
+                    {
+                        original.insert(s.id.clone());
+                    }
+                }
+                self.selection = original;
+            }
             Some(Drag::Move { scene, preview, .. }) => {
                 if positions(&doc.project)
                     .get(scene)
@@ -337,6 +401,47 @@ impl Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn condition_ports_and_multi_move_are_atomic() {
+        let mut p = Project::demo();
+        p.scenes[1].kind = NodeKind::Condition;
+        let mut d = Document::new(p);
+        connect(&mut d, 1, Port::Otherwise, Some(2)).unwrap();
+        assert_eq!(
+            d.project.scenes[1].otherwise.as_deref(),
+            Some(d.project.scenes[2].id.as_str())
+        );
+        assert_eq!(
+            ports(&d.project.scenes[1]),
+            vec![Port::Next, Port::Otherwise]
+        );
+        let before = d.project.clone();
+        let points = positions(&before);
+        let mut g = Graph {
+            drag: Some(Drag::MoveMany {
+                origins: vec![(0, points[0]), (1, points[1])],
+                start: Point::default(),
+                delta: Point::default(),
+            }),
+            ..Graph::default()
+        };
+        g.move_pointer(Point::new(36., 24.));
+        g.commit(&mut d, Point::default()).unwrap();
+        let after = positions(&d.project);
+        assert_eq!(after[0].x, points[0].x + 36.);
+        assert_eq!(after[1].y, points[1].y + 24.);
+        assert_eq!(after[2], points[2]);
+        d.undo();
+        assert_eq!(d.project, before);
+        g.drag = Some(Drag::Marquee {
+            start: points[0],
+            pointer: Point::new(points[0].x + NODE_WIDTH, points[0].y + 40.),
+            original: BTreeSet::new(),
+        });
+        g.commit(&mut d, Point::default()).unwrap();
+        assert!(g.selection.contains(&d.project.scenes[0].id));
+        assert_eq!(d.project, before);
+    }
     #[test]
     fn graph_edits_drive_playback_and_undo() {
         let mut d = Document::new(Project::demo());

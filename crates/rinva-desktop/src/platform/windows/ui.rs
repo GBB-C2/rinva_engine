@@ -304,7 +304,7 @@ impl Controls {
             MoveWindow(bar.hwnd, px(x + w - 14), px(y), px(14), px(h), 1);
             scroll::sync(*bar);
         }
-        if id < 700 && id != super::STATUS {
+        if !is_class(self.get(id), "STATIC") {
             let mut rect: RECT = std::mem::zeroed();
             GetWindowRect(self.get(id), &mut rect);
             let region = CreateRoundRectRgn(
@@ -585,6 +585,38 @@ pub unsafe fn composing(hwnd: HWND) -> bool {
     let mut data = 0;
     GetWindowSubclass(hwnd, Some(field_proc), 2, &mut data) != 0
         && (*(data as *const FieldStyle)).composing
+}
+pub unsafe fn is_class(hwnd: HWND, class: &str) -> bool {
+    let mut name = [0u16; 64];
+    let n = GetClassNameW(hwnd, name.as_mut_ptr(), name.len() as i32);
+    n > 0 && String::from_utf16_lossy(&name[..n as usize]).eq_ignore_ascii_case(class)
+}
+pub unsafe fn audio_dialog(hwnd: HWND, title: &str) -> Result<Option<PathBuf>, String> {
+    use windows_sys::Win32::UI::Controls::Dialogs::*;
+    let filter = wide("Audio (WAV, MP3, M4A, FLAC)\0*.wav;*.mp3;*.m4a;*.flac\0\0");
+    let title = wide(title);
+    let mut file = vec![0u16; 32768];
+    let mut dialog: OPENFILENAMEW = std::mem::zeroed();
+    dialog.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
+    dialog.hwndOwner = hwnd;
+    dialog.lpstrFilter = filter.as_ptr();
+    dialog.lpstrFile = file.as_mut_ptr();
+    dialog.nMaxFile = file.len() as u32;
+    dialog.lpstrTitle = title.as_ptr();
+    dialog.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+    if GetOpenFileNameW(&mut dialog) == 0 {
+        let code = CommDlgExtendedError();
+        return if code == 0 {
+            Ok(None)
+        } else {
+            Err(format!("Не удалось открыть окно выбора файла: {code:#x}"))
+        };
+    }
+    use std::os::windows::ffi::OsStringExt;
+    let n = file.iter().position(|c| *c == 0).unwrap_or(file.len());
+    Ok(Some(PathBuf::from(std::ffi::OsString::from_wide(
+        &file[..n],
+    ))))
 }
 unsafe extern "system" fn field_proc(
     hwnd: HWND,

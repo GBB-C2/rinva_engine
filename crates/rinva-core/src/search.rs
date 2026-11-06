@@ -108,6 +108,7 @@ pub fn field_text<'a>(
     match field {
         Field::Project => return Some(&project.id),
         Field::ProjectTitle => return Some(&project.title),
+        Field::Logic | Field::Audio | Field::Characters => return Some(""),
         _ => {}
     }
     let scene = project.scene(scene_id?)?;

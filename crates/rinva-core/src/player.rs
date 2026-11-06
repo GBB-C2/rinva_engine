@@ -1,6 +1,6 @@
-use crate::{Choice, Line, Project, Scene};
+use crate::{Choice, Line, MusicState, NodeKind, Project, Scene};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -8,8 +8,13 @@ struct Position {
     scene: String,
     line: usize,
     ended: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    variables: BTreeMap<String, i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    music: Option<MusicState>,
+    #[serde(default)]
+    music_fade_ms: u32,
 }
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SaveGame {
@@ -18,8 +23,9 @@ pub struct SaveGame {
     signature: String,
     position: Position,
     history: Vec<Position>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    read: BTreeSet<String>,
 }
-
 pub enum Frame<'a> {
     Dialogue {
         scene: &'a Scene,
@@ -27,19 +33,20 @@ pub enum Frame<'a> {
     },
     Choices {
         scene: &'a Scene,
-        choices: &'a [Choice],
+        choices: Vec<&'a Choice>,
     },
     End {
         scene: &'a Scene,
     },
 }
-
 pub struct Player {
     project: Project,
     position: Position,
     history: Vec<Position>,
+    read: BTreeSet<String>,
+    effects: Vec<String>,
+    serial: u64,
 }
-
 impl Player {
     pub fn new(project: &Project) -> Result<Self, String> {
         Self::from_scene(project, &project.start_scene)
@@ -55,37 +62,94 @@ impl Player {
                 scene: scene.into(),
                 line: 0,
                 ended: false,
+                variables: project.variables.clone(),
+                music: None,
+                music_fade_ms: 600,
             },
             history: vec![],
+            read: BTreeSet::new(),
+            effects: vec![],
+            serial: 0,
         };
-        player.normalize()?;
+        player.normalize(true)?;
         Ok(player)
     }
-    fn normalize(&mut self) -> Result<(), String> {
-        let mut seen = HashSet::new();
-        loop {
+    fn normalize(&mut self, mut enter: bool) -> Result<(), String> {
+        // Conditions may form finite loops that change a variable; bound automatic work.
+        for _ in 0..20_000 {
             let scene = self
                 .project
                 .scene(&self.position.scene)
                 .ok_or("Сцена не найдена.")?;
-            if self.position.line < scene.lines.len() || !scene.choices.is_empty() {
-                break;
-            }
-            if let Some(next) = &scene.next {
-                if !seen.insert(scene.id.clone()) {
-                    return Err("Цикл без ожидания ввода.".into());
+            if enter {
+                if let Some(audio) = &scene.audio {
+                    if audio.stop_music || audio.music.is_some() {
+                        self.position.music_fade_ms = audio.fade_ms;
+                    }
+                    if audio.stop_music {
+                        self.position.music = None;
+                    }
+                    if let Some(file) = &audio.music {
+                        self.position.music = Some(MusicState {
+                            file: file.clone(),
+                            volume: audio.volume,
+                            fade_ms: audio.fade_ms,
+                        });
+                    }
+                    if let Some(effect) = &audio.effect {
+                        self.effects.push(effect.clone());
+                    }
                 }
-                self.position = Position {
-                    scene: next.clone(),
-                    line: 0,
-                    ended: false,
-                };
+                if scene.kind == NodeKind::SetVariable {
+                    scene
+                        .assignment
+                        .as_ref()
+                        .ok_or("Настройте изменение переменной.")?
+                        .apply(&mut self.position.variables)?;
+                }
+            }
+            if scene.kind.interactive()
+                && (self.position.line < scene.lines.len()
+                    || scene.choices.iter().any(|c| {
+                        c.condition
+                            .as_ref()
+                            .is_none_or(|c| c.evaluate(&self.position.variables))
+                    }))
+            {
+                return Ok(());
+            }
+            let next = match scene.kind {
+                NodeKind::End => None,
+                NodeKind::Condition => {
+                    if scene
+                        .condition
+                        .as_ref()
+                        .ok_or("Настройте условие.")?
+                        .evaluate(&self.position.variables)
+                    {
+                        scene.next.as_ref()
+                    } else {
+                        scene.otherwise.as_ref()
+                    }
+                }
+                _ => scene.next.as_ref(),
+            };
+            if let Some(next) = next {
+                self.position.scene = next.clone();
+                self.position.line = 0;
+                self.position.ended = false;
+                enter = true;
             } else {
                 self.position.ended = true;
-                break;
+                self.position.line = if scene.kind.interactive() {
+                    scene.lines.len()
+                } else {
+                    0
+                };
+                return Ok(());
             }
         }
-        Ok(())
+        Err("Слишком много автоматических переходов. Проверьте условия цикла.".into())
     }
     pub fn frame(&self) -> Frame<'_> {
         let scene = self
@@ -99,23 +163,47 @@ impl Player {
         } else {
             Frame::Choices {
                 scene,
-                choices: &scene.choices,
+                choices: scene
+                    .choices
+                    .iter()
+                    .filter(|c| {
+                        c.condition
+                            .as_ref()
+                            .is_none_or(|c| c.evaluate(&self.position.variables))
+                    })
+                    .collect(),
             }
         }
     }
-    fn checkpoint(&mut self) {
-        self.history.push(self.position.clone());
+    fn transition(&mut self, target: Option<String>) -> Result<(), String> {
+        let before = self.position.clone();
+        let old_effects = std::mem::take(&mut self.effects);
+        let entering = target.is_some();
+        if let Some(target) = target {
+            self.position.scene = target;
+            self.position.line = 0;
+            self.position.ended = false;
+        } else {
+            self.position.line += 1;
+        }
+        if let Err(error) = self.normalize(entering) {
+            self.position = before;
+            self.effects = old_effects;
+            return Err(error);
+        }
+        self.history.push(before);
         if self.history.len() > 1000 {
             self.history.remove(0);
         }
+        self.serial = self.serial.wrapping_add(1);
+        Ok(())
     }
     pub fn advance(&mut self) -> Result<(), String> {
-        if !matches!(self.frame(), Frame::Dialogue { .. }) {
-            return Ok(());
+        if matches!(self.frame(), Frame::Dialogue { .. }) {
+            self.mark_read();
+            self.transition(None)?;
         }
-        self.checkpoint();
-        self.position.line += 1;
-        self.normalize()
+        Ok(())
     }
     pub fn choose(&mut self, index: usize) -> Result<(), String> {
         let target = match self.frame() {
@@ -126,21 +214,71 @@ impl Player {
                 .clone(),
             _ => return Err("Сейчас выбор ответа недоступен.".into()),
         };
-        self.checkpoint();
-        self.position = Position {
-            scene: target,
-            line: 0,
-            ended: false,
-        };
-        self.normalize()
+        self.transition(Some(target))
     }
     pub fn back(&mut self) {
         if let Some(old) = self.history.pop() {
             self.position = old;
+            self.effects.clear();
+            self.serial = self.serial.wrapping_add(1);
         }
     }
     pub fn can_go_back(&self) -> bool {
         !self.history.is_empty()
+    }
+    pub fn variables(&self) -> &BTreeMap<String, i64> {
+        &self.position.variables
+    }
+    pub fn music(&self) -> Option<&MusicState> {
+        self.position.music.as_ref()
+    }
+    pub fn music_fade_ms(&self) -> u32 {
+        self.position.music_fade_ms
+    }
+    pub fn effects(&self) -> &[String] {
+        &self.effects
+    }
+    pub fn serial(&self) -> u64 {
+        self.serial
+    }
+    pub fn line_key(&self) -> String {
+        format!("{}:{}", self.position.scene, self.position.line)
+    }
+    pub fn was_read(&self) -> bool {
+        self.read.contains(&self.line_key())
+    }
+    pub fn mark_read(&mut self) {
+        if matches!(self.frame(), Frame::Dialogue { .. }) {
+            self.read.insert(self.line_key());
+        }
+    }
+    pub fn read_lines(&self) -> &BTreeSet<String> {
+        &self.read
+    }
+    pub fn merge_read(&mut self, read: BTreeSet<String>) {
+        let valid: BTreeSet<_> = self
+            .project
+            .scenes
+            .iter()
+            .flat_map(|s| (0..s.lines.len()).map(move |i| format!("{}:{i}", s.id)))
+            .collect();
+        self.read
+            .extend(read.into_iter().filter(|key| valid.contains(key)));
+    }
+    pub fn backlog(&self) -> String {
+        self.history
+            .iter()
+            .filter_map(|p| {
+                let scene = self.project.scene(&p.scene)?;
+                let line = scene.lines.get(p.line)?;
+                Some(if line.speaker.is_empty() {
+                    line.text.clone()
+                } else {
+                    format!("{}\r\n{}", line.speaker, line.text)
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\r\n\r\n")
     }
     pub fn save(&self) -> SaveGame {
         SaveGame {
@@ -149,6 +287,7 @@ impl Player {
             signature: self.project.story_signature(),
             position: self.position.clone(),
             history: self.history.clone(),
+            read: self.read.clone(),
         }
     }
     pub fn restore(&mut self, saved: SaveGame) -> Result<(), String> {
@@ -166,17 +305,47 @@ impl Player {
                 .project
                 .scene(&pos.scene)
                 .ok_or("В сохранении неизвестная сцена.")?;
-            let terminal =
-                pos.line == scene.lines.len() && scene.choices.is_empty() && scene.next.is_none();
-            let valid = pos.line < scene.lines.len()
-                || (pos.line == scene.lines.len() && !scene.choices.is_empty())
+            if !pos.variables.keys().eq(self.project.variables.keys()) {
+                return Err("Повреждены переменные сохранения.".into());
+            }
+            if pos.music_fade_ms > 10_000 {
+                return Err("Повреждено состояние музыки.".into());
+            }
+            let has_choices = scene.choices.iter().any(|c| {
+                c.condition
+                    .as_ref()
+                    .is_none_or(|c| c.evaluate(&pos.variables))
+            });
+            let terminal = if scene.kind == NodeKind::End {
+                pos.line == 0
+            } else {
+                scene.kind.interactive()
+                    && pos.line == scene.lines.len()
+                    && !has_choices
+                    && scene.next.is_none()
+            };
+            let valid = scene.kind.interactive()
+                && (pos.line < scene.lines.len() || pos.line == scene.lines.len() && has_choices)
                 || terminal;
             if !valid || pos.ended != terminal {
                 return Err("Повреждена позиция в сохранении.".into());
             }
+            if let Some(music) = &pos.music {
+                if music.volume > 100
+                    || music.fade_ms > 10_000
+                    || !self.project.scenes.iter().any(|s| {
+                        s.audio.as_ref().and_then(|a| a.music.as_ref()) == Some(&music.file)
+                    })
+                {
+                    return Err("Повреждено состояние музыки.".into());
+                }
+            }
         }
         self.position = saved.position;
         self.history = saved.history;
+        self.merge_read(saved.read);
+        self.effects.clear();
+        self.serial = self.serial.wrapping_add(1);
         Ok(())
     }
 }

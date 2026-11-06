@@ -6,6 +6,9 @@ mod graph;
 #[cfg(any(windows, test))]
 #[cfg_attr(not(windows), allow(dead_code))]
 mod i18n;
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod reading;
 
 #[cfg(windows)]
 #[path = "platform/windows/mod.rs"]

@@ -1,11 +1,16 @@
+mod audio;
 mod fonts;
 mod navigation;
 mod navigation_smoke;
 mod nodes;
 mod paint;
+mod reader_ui;
 mod recovery;
 mod scroll;
 mod smoke_ui;
+mod splitters;
+mod studio;
+mod studio_smoke;
 mod ui;
 
 use crate::{
@@ -177,6 +182,18 @@ struct Settings {
     dark: bool,
     #[serde(default)]
     language: Language,
+    #[serde(default)]
+    reading: crate::reading::ReadingSettings,
+    #[serde(default = "default_left")]
+    left_width: i32,
+    #[serde(default = "default_right")]
+    right_width: i32,
+}
+fn default_left() -> i32 {
+    224
+}
+fn default_right() -> i32 {
+    300
 }
 
 struct App {
@@ -190,6 +207,12 @@ struct App {
     graph: Graph,
     graph_mode: bool,
     navigation: navigation::Navigation,
+    studio: studio::Studio,
+    reader: crate::reading::Reader,
+    audio: audio::Audio,
+    left_width: i32,
+    right_width: i32,
+    splitter: Option<(bool, i32, i32)>,
     document: Document,
     file: Option<PathBuf>,
     asset_root: PathBuf,
@@ -206,6 +229,7 @@ struct App {
     status: String,
     background: Option<paint::Bitmap>,
     portrait: Option<paint::Bitmap>,
+    sprites: Vec<paint::SpriteImage>,
     image_key: String,
     export_result: Option<std::sync::mpsc::Receiver<Result<PathBuf, String>>>,
 }
@@ -248,6 +272,9 @@ impl App {
             .unwrap_or(Settings {
                 dark: true,
                 language: Language::default(),
+                reading: crate::reading::ReadingSettings::default(),
+                left_width: 224,
+                right_width: 300,
             });
         let dark = settings.dark;
         let language = settings.language;
@@ -282,6 +309,8 @@ impl App {
             font,
         )?;
         navigation::create(&mut controls, hwnd, &resources)?;
+        studio::create(&mut controls, hwnd, &resources)?;
+        reader_ui::create(&mut controls, hwnd, &resources)?;
         let player = if player_only {
             Some(Player::new(&project)?)
         } else {
@@ -289,6 +318,11 @@ impl App {
         };
         theme_title(hwnd, dark);
         SetTimer(hwnd, 1, 200, None);
+        SetTimer(hwnd, 2, 33, None);
+        let mut reader = crate::reading::Reader::new(settings.reading);
+        if SMOKE_TRACE.get().is_some() {
+            reader.settings.speed = 0;
+        }
         Ok(Self {
             hwnd,
             controls,
@@ -300,6 +334,12 @@ impl App {
             graph: Graph::default(),
             graph_mode: false,
             navigation: navigation::Navigation::default(),
+            studio: studio::Studio::default(),
+            reader,
+            audio: audio::Audio::new(),
+            left_width: settings.left_width.clamp(180, 300),
+            right_width: settings.right_width.clamp(280, 420),
+            splitter: None,
             document: Document::new(project),
             file,
             asset_root,
@@ -316,6 +356,7 @@ impl App {
             status: "Создайте сцену, напишите реплики и нажмите F5.".into(),
             background: None,
             portrait: None,
+            sprites: vec![],
             image_key: String::new(),
             export_result: None,
         })
@@ -330,6 +371,9 @@ impl App {
             &Settings {
                 dark: self.dark,
                 language: self.language,
+                reading: self.reader.settings.clone(),
+                left_width: self.left_width,
+                right_width: self.right_width,
             },
         )
     }
@@ -437,6 +481,20 @@ impl App {
             .join(format!("{}.json", self.document.project.story_signature()))
     }
 
+    fn panel_geometry(&self, w: i32) -> (i32, i32, i32, i32) {
+        let left = self
+            .left_width
+            .clamp(180, 300)
+            .min((w - 280 - 572).max(180));
+        let right_width = self
+            .right_width
+            .clamp(280, 420)
+            .min((w - left - 572).max(280));
+        let center = left + 24;
+        let right = w - right_width - 16;
+        (center, right, right - center - 16, right_width - 32)
+    }
+
     unsafe fn layout(&self) {
         let mut rect: RECT = std::mem::zeroed();
         GetClientRect(self.hwnd, &mut rect);
@@ -506,18 +564,24 @@ impl App {
                 place(id, x, 20, width, 32);
             }
             place(PLAY, w - 158, 20, 138, 32);
-            place(LANGUAGE, 28, 96, 184, 220);
-            place(LABEL_PROJECT, 28, 146, 184, 20);
-            place(PROJECT_TITLE, 28, 172, 184, 32);
-            place(LABEL_SCENES, 28, 224, 184, 20);
-            place(SCENES, 20, 252, 200, h - 420);
-            place(START_SCENE, 28, h - 154, 184, 32);
-            place(ADD_SCENE, 28, h - 114, 184, 32);
-            place(DUP_SCENE, 28, h - 74, 88, 32);
-            place(DELETE_SCENE, 124, h - 74, 88, 32);
-            let right = w - 316;
-            let center = 248;
-            let cw = right - center - 16;
+            let (center, _, _, _) = self.panel_geometry(w);
+            let left = center - 24;
+            place(LANGUAGE, 28, 96, left - 40, 220);
+            place(LABEL_PROJECT, 28, 146, left - 40, 20);
+            place(PROJECT_TITLE, 28, 172, left - 40, 32);
+            place(LABEL_SCENES, 28, 224, left - 40, 20);
+            place(SCENES, 20, 252, left - 24, h - 420);
+            place(START_SCENE, 28, h - 154, left - 40, 32);
+            place(ADD_SCENE, 28, h - 114, left - 40, 32);
+            place(DUP_SCENE, 28, h - 74, (left - 48) / 2, 32);
+            place(
+                DELETE_SCENE,
+                36 + (left - 48) / 2,
+                h - 74,
+                (left - 48) / 2,
+                32,
+            );
+            let (center, right, cw, iw) = self.panel_geometry(w);
             let preview_h = (cw * 9 / 16).min(h - 360).max(180);
             place(VIEW_PREVIEW, center, 84, 112, 28);
             place(VIEW_NODES, center + 120, 84, 78, 28);
@@ -536,8 +600,8 @@ impl App {
             place(DELETE_ITEM, center + 120, h - 74, 88, 32);
             place(UP, center + 216, h - 74, 70, 32);
             place(DOWN, center + 294, h - 74, 70, 32);
-            place(LABEL_SCENE, right + 16, 98, 268, 20);
-            place(SCENE_NAME, right + 16, 124, 268, 32);
+            place(LABEL_SCENE, right + 16, 98, iw, 20);
+            place(SCENE_NAME, right + 16, 124, iw, 32);
             place(BACKGROUND, right + 16, 174, 184, 32);
             place(CLEAR_BG, right + 208, 174, 76, 32);
             place(PORTRAIT, right + 16, 214, 184, 32);
@@ -571,6 +635,8 @@ impl App {
             place(NEXT_SCENE, right + 16, h - 88, 268, 220);
         }
         navigation::layout(self, w, h);
+        studio::layout(self, w, h);
+        reader_ui::layout(self, w, h);
         for id in [SCENES, ITEMS, GAME_CHOICES] {
             SendMessageW(
                 self.controls.get(id),
@@ -782,8 +848,10 @@ impl App {
             .unwrap_or(0);
         self.controls
             .fill_list(NEXT_SCENE, &destinations, next, true);
-        self.controls
-            .enable(NEXT_SCENE, scene.choices.is_empty() || scene.next.is_some());
+        self.controls.enable(
+            NEXT_SCENE,
+            !scene.kind.interactive() || scene.choices.is_empty() || scene.next.is_some(),
+        );
         let target = scene
             .choices
             .get(self.selected_item)
@@ -800,7 +868,11 @@ impl App {
         self.controls
             .enable(START_SCENE, scene.id != self.document.project.start_scene);
         for id in [SPEAKER, BODY, TARGET, DELETE_ITEM] {
-            self.controls.enable(id, count > 0);
+            self.controls
+                .enable(id, count > 0 && scene.kind.interactive());
+        }
+        for id in [ADD_ITEM, TAB_LINES, TAB_CHOICES] {
+            self.controls.enable(id, scene.kind.interactive());
         }
         self.controls
             .enable(UP, self.selected_item > 0 && count > 0);
@@ -862,6 +934,8 @@ impl App {
         self.load_images();
         self.update_title();
         navigation::refresh(self);
+        studio::refresh(self);
+        reader_ui::refresh(self);
         self.layout();
     }
 
@@ -887,26 +961,39 @@ impl App {
     }
 
     unsafe fn load_images(&mut self) {
-        let (bg, portrait) = if let Some(player) = &self.player {
+        let (bg, portrait, sprites) = if let Some(player) = &self.player {
             let scene = match player.frame() {
                 Frame::Dialogue { scene, .. }
                 | Frame::Choices { scene, .. }
                 | Frame::End { scene } => scene,
             };
-            (scene.background.clone(), scene.portrait.clone())
+            (
+                scene.background.clone(),
+                scene.portrait.clone(),
+                scene.sprites.clone(),
+            )
         } else {
             (
                 self.scene().background.clone(),
                 self.scene().portrait.clone(),
+                self.scene().sprites.clone(),
             )
         };
-        let key = format!("{:?}|{:?}|{:?}", self.root(), bg, portrait);
+        let key = format!(
+            "{:?}|{:?}|{:?}|{:?}|{:?}",
+            self.root(),
+            bg,
+            portrait,
+            sprites,
+            self.document.project.characters
+        );
         if self.image_key == key {
             return;
         }
         self.image_key = key;
         self.background = None;
         self.portrait = None;
+        self.sprites.clear();
         for (name, is_portrait) in [(bg, false), (portrait, true)] {
             if let Some(name) = name {
                 match storage::resolve_asset(&self.root(), &name)
@@ -923,6 +1010,33 @@ impl App {
                 }
             }
         }
+        for sprite in sprites.into_iter().take(16) {
+            if let Some(character) = self
+                .document
+                .project
+                .characters
+                .iter()
+                .find(|c| c.id == sprite.character)
+            {
+                if let Some(expression) = character
+                    .expressions
+                    .iter()
+                    .find(|e| e.id == sprite.expression)
+                {
+                    match storage::resolve_asset(&self.root(), &expression.image)
+                        .and_then(|p| paint::Bitmap::load(&p))
+                    {
+                        Ok(image) => self.sprites.push(paint::SpriteImage {
+                            image,
+                            name: character.name.clone(),
+                            placement: sprite,
+                        }),
+                        Err(error) => self.status = error,
+                    }
+                }
+            }
+        }
+        self.sprites.sort_by_key(|s| s.placement.layer);
     }
 
     unsafe fn edit_changed(&mut self, id: u16) {
@@ -1018,6 +1132,9 @@ impl App {
     }
 
     unsafe fn command(&mut self, id: u16, notification: u16) -> Result<(), String> {
+        if studio::command(self, id, notification)? || reader_ui::command(self, id, notification)? {
+            return Ok(());
+        }
         if navigation::command(self, id, notification) {
             return Ok(());
         }
@@ -1056,6 +1173,9 @@ impl App {
             ReleaseCapture();
         }
         self.document.finish_edit();
+        if self.player.is_none() {
+            self.audio.stop();
+        }
         let index = self.selected_scene;
         let item = self.selected_item;
         match id {
@@ -1182,6 +1302,7 @@ impl App {
                 }
             }
             SCENES => {
+                self.graph.selection.clear();
                 if let Some(i) = self.controls.selection(SCENES, false) {
                     self.selected_scene = i;
                     self.selected_item = 0;
@@ -1276,11 +1397,13 @@ impl App {
                     if choices {
                         scene.next = None;
                         scene.choices.push(Choice {
+                            condition: None,
                             text: choice_text,
                             target,
                         });
                     } else {
                         scene.lines.push(Line {
+                            voice: None,
                             speaker: String::new(),
                             text: line_text,
                         });
@@ -1399,16 +1522,23 @@ impl App {
                 } else {
                     Player::new(&self.document.project)?
                 });
+                self.reader.reset();
+                reader_ui::restore_read(self);
                 self.status =
                     "Enter — далее / выбрать · Назад — предыдущая реплика · Esc — редактор".into();
             }
             STOP => {
                 if !self.player_only {
+                    reader_ui::remember(self);
                     self.player = None;
+                    self.audio.stop();
                     self.status = "Редактор · Ctrl+S — сохранить · F5 — запустить".into();
                 }
             }
             ADVANCE => {
+                if reader_ui::reveal_first(self) {
+                    return Ok(());
+                }
                 if let Some(player) = &mut self.player {
                     match player.frame() {
                         Frame::Dialogue { .. } => player.advance()?,
@@ -1419,6 +1549,9 @@ impl App {
                 }
             }
             BACK => {
+                self.reader.auto = false;
+                self.reader.skip = false;
+                self.reader.log = false;
                 if let Some(player) = &mut self.player {
                     player.back();
                 }
@@ -1431,6 +1564,7 @@ impl App {
                 }
             }
             GAME_SAVE => {
+                reader_ui::remember(self);
                 if let Some(player) = &self.player {
                     let path = self.game_save_path();
                     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
@@ -1497,11 +1631,11 @@ impl App {
 
     unsafe fn rebuild_resources(&mut self) {
         let resources = Resources::new(self.scale, self.palette, self.language);
-        for (&id, &handle) in &self.controls.handles {
+        for &handle in self.controls.handles.values() {
             SendMessageW(
                 handle,
                 WM_SETFONT,
-                if id >= 700 || id == STATUS {
+                if ui::is_class(handle, "STATIC") {
                     resources.small as usize
                 } else {
                     resources.font as usize
@@ -1557,12 +1691,14 @@ impl App {
             DT_LEFT | DT_SINGLELINE,
         );
         if self.player.is_none() {
+            let w = (rect.right as f32 / self.scale) as i32;
+            let (center, right, _, _) = self.panel_geometry(w);
             ui::rounded(
                 dc,
                 RECT {
                     left: px(16),
                     top: px(84),
-                    right: px(224),
+                    right: px(center - 24),
                     bottom: rect.bottom - px(36),
                 },
                 self.palette.surface,
@@ -1572,7 +1708,7 @@ impl App {
             ui::rounded(
                 dc,
                 RECT {
-                    left: rect.right - px(316),
+                    left: px(right),
                     top: px(84),
                     right: rect.right - px(16),
                     bottom: rect.bottom - px(36),
@@ -1591,9 +1727,12 @@ impl App {
         }
         let (scene, speaker, text, ended) = if let Some(player) = &self.player {
             match player.frame() {
-                Frame::Dialogue { scene, line } => {
-                    (scene, line.speaker.as_str(), line.text.as_str(), false)
-                }
+                Frame::Dialogue { scene, line } => (
+                    scene,
+                    line.speaker.as_str(),
+                    self.reader.visible(&line.text),
+                    false,
+                ),
                 Frame::Choices { scene, .. } => (scene, "", self.t("Выберите ответ ниже"), false),
                 Frame::End { scene } => (scene, "", "", true),
             }
@@ -1602,14 +1741,20 @@ impl App {
             let line = scene.lines.get(self.selected_item);
             (
                 scene,
-                line.map(|l| l.speaker.as_str()).unwrap_or(""),
-                if self.choices_tab {
+                if scene.kind.interactive() {
+                    line.map(|l| l.speaker.as_str()).unwrap_or("")
+                } else {
+                    ""
+                },
+                if !scene.kind.interactive() {
+                    self.t("Этот узел выполняется автоматически. Настройте его в инспекторе или соедините выходы на вкладке «Ноды».")
+                } else if self.choices_tab {
                     self.t("Варианты ответа появятся после реплик сцены.")
                 } else {
                     line.map(|l| l.text.as_str())
                         .unwrap_or(self.t("Добавьте первую реплику кнопкой «+ Реплика»."))
                 },
-                false,
+                scene.kind == rinva_core::NodeKind::End,
             )
         };
         paint::scene(
@@ -1621,6 +1766,7 @@ impl App {
                 text,
                 background: self.background.as_ref(),
                 portrait: self.portrait.as_ref(),
+                sprites: &self.sprites,
                 ended,
                 end_text: self.t("Конец истории"),
             },
@@ -1641,6 +1787,11 @@ impl App {
             || (id == navigation::SEARCH && self.navigation.mode == Some(navigation::Mode::Search))
             || (id == navigation::PROBLEMS
                 && self.navigation.mode == Some(navigation::Mode::Problems));
+        let active = active
+            || id == reader_ui::AUTO && self.reader.auto
+            || id == reader_ui::SKIP && self.reader.skip
+            || id == reader_ui::LOG && self.reader.log
+            || id == studio::MINIMAP && self.graph.minimap;
         let primary = matches!(id, PLAY | ADVANCE);
         let mut pointer: POINT = std::mem::zeroed();
         GetCursorPos(&mut pointer);
@@ -1782,6 +1933,28 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
     })
 }
 unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if matches!(
+        msg,
+        WM_LBUTTONDOWN
+            | WM_LBUTTONUP
+            | WM_MOUSEMOVE
+            | WM_CAPTURECHANGED
+            | WM_CANCELMODE
+            | WM_KILLFOCUS
+            | WM_KEYDOWN
+    ) {
+        let handled = APP.with(|slot| {
+            if let Ok(mut slot) = slot.try_borrow_mut() {
+                if let Some(app) = slot.as_mut() {
+                    return splitters::event(app, msg, w, l);
+                }
+            }
+            false
+        });
+        if handled {
+            return 0;
+        }
+    }
     match msg {
         WM_ERASEBKGND => 1,
         WM_COMMAND => {
@@ -1891,7 +2064,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                     let dc = w as HDC;
                     SetTextColor(dc, app.palette.text);
                     let field = msg != WM_CTLCOLORSTATIC
-                        || [TRANSCRIPT, navigation::DETAIL]
+                        || [TRANSCRIPT, navigation::DETAIL, 3007]
                             .iter()
                             .any(|id| l as HWND == app.controls.get(*id));
                     SetBkColor(
@@ -1941,6 +2114,16 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
             });
             0
         }
+        WM_TIMER if w == 2 => {
+            APP.with(|slot| {
+                if let Ok(mut slot) = slot.try_borrow_mut() {
+                    if let Some(app) = slot.as_mut() {
+                        reader_ui::tick(app);
+                    }
+                }
+            });
+            0
+        }
         WM_TIMER => {
             APP.with(|slot|if let Ok(mut slot)=slot.try_borrow_mut(){if let Some(app)=slot.as_mut(){
             app.autosave_tick();
@@ -1962,6 +2145,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
             let close = APP.with(|slot| {
                 if let Ok(mut slot) = slot.try_borrow_mut() {
                     if let Some(app) = slot.as_mut() {
+                        reader_ui::remember(app);
                         if app.export_result.is_some() {
                             ui::message(
                                 hwnd,
@@ -2007,6 +2191,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         }
         WM_DESTROY => {
             KillTimer(hwnd, 1);
+            KillTimer(hwnd, 2);
             PostQuitMessage(0);
             0
         }
@@ -2103,19 +2288,27 @@ unsafe fn shortcut(message: &MSG) -> bool {
         let slot = slot.borrow();
         let app = slot.as_ref()?;
         let focus = GetFocus();
-        let text_entry = [
-            PROJECT_TITLE,
-            SCENE_NAME,
-            SPEAKER,
-            BODY,
-            TRANSCRIPT,
-            navigation::QUERY,
-            navigation::DETAIL,
-        ]
-        .iter()
-        .any(|id| focus == app.controls.get(*id));
+        if ui::is_class(focus, "COMBOBOX") && SendMessageW(focus, CB_GETDROPPEDSTATE, 0, 0) != 0 {
+            return None;
+        }
+        let text_entry = ui::is_class(focus, "EDIT")
+            || [
+                PROJECT_TITLE,
+                SCENE_NAME,
+                SPEAKER,
+                BODY,
+                TRANSCRIPT,
+                navigation::QUERY,
+                navigation::DETAIL,
+            ]
+            .iter()
+            .any(|id| focus == app.controls.get(*id));
         let command = if app.player.is_some() {
             match key {
+                VK_ESCAPE if app.reader.log => reader_ui::LOG,
+                0x41 if !text_entry => reader_ui::AUTO,
+                0x53 if !text_entry && !ctrl => reader_ui::SKIP,
+                0x4C if !text_entry => reader_ui::LOG,
                 VK_ESCAPE if !app.player_only => STOP,
                 VK_F6 => GAME_SAVE,
                 VK_F9 => GAME_LOAD,
@@ -2280,6 +2473,9 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         }
         smoke_trace("window created");
         let mut app = App::new(hwnd, project, file, play)?;
+        if play {
+            reader_ui::restore_read(&mut app);
+        }
         smoke_trace("controls created");
         if !play && !smoke {
             app.recover_previous()?;
@@ -2421,6 +2617,7 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     smoke_ui::run(hwnd, output)?;
     smoke_trace("polish done");
     navigation_smoke::run(hwnd, output)?;
+    studio_smoke::run(hwnd, output)?;
     let original_dark = APP.with(|slot| slot.borrow().as_ref().unwrap().dark);
     if !original_dark {
         command(THEME);
@@ -2479,6 +2676,6 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
         command(THEME);
     }
     APP.with(|slot| slot.borrow_mut().as_mut().unwrap().clear_recovery())?;
-    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, Unicode edit notifications and grouped undo, scene command, undo/redo, dropdown dismissal, live theme switch, playback choice and rollback, project roundtrip, timer-driven background autosave, live-session isolation, crash recovery, backup fallback, asynchronous discard, rounded controls, five live languages, node drag/cancel/capture loss, graph connections/undo, arrange/zoom, native scrollbar dragging/keyboard/wheel, Unicode search selection, stale-result protection, search scopes, diagnostics navigation and repair, warning-only playback, screenshots.\n").map_err(|e|e.to_string())?;
+    std::fs::write(output.join("native-smoke.txt"),"PASS: native window and controls, Unicode edit notifications and grouped undo, scene command, undo/redo, dropdown dismissal, live theme switch, playback choice and rollback, project roundtrip, timer-driven background autosave, live-session isolation, crash recovery, backup fallback, asynchronous discard, rounded controls, five live languages, node drag/cancel/capture loss, graph connections/undo, arrange/zoom, native scrollbar dragging/keyboard/wheel, Unicode search selection, stale-result protection, search scopes, diagnostics navigation and repair, warning-only playback, variables and conditions, actor placement, audio channels, reading controls and backlog, panel resizing, media export, screenshots.\n").map_err(|e|e.to_string())?;
     Ok(())
 }

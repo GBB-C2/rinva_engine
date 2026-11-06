@@ -2,7 +2,17 @@
 
 Снимки клиентской области настоящего Win32-приложения, созданные командой `rinva.exe --smoke-test smoke-output` на Windows в GitHub Actions. Используется синхронная отрисовка работающих окон через `WM_PRINT`. Изображения не являются макетами и не дорисованы.
 
-Версия исходников: [`dae42fd`](https://github.com/GBB-C2/rinva_engine/commit/dae42fd696aa18392951a0788902e7857a7ff344). [Запуск проверок и исходные артефакты](https://github.com/GBB-C2/rinva_engine/actions/runs/42098006391).
+Версия исходников: [`cf9b145`](https://github.com/GBB-C2/rinva_engine/commit/cf9b145212c1166eaecb021ac7d8074d91ab9325). [Запуск проверок и исходные артефакты](https://github.com/GBB-C2/rinva_engine/actions/runs/42113858600).
+
+## Studio: логика, звук, персонажи и чтение
+
+![Группы, переменные, условия и миникарта](studio-nodes-ru.png)
+
+![Каталог и два персонажа в сцене](studio-characters-ru.png)
+
+![Настройки чтения и подсветка говорящего](studio-reader-ru.png)
+
+Геометрические фигуры — прозрачные PNG для проверки размещения двух персонажей. Они созданы тестом и не выдаются за готовые иллюстрации. Аудиофайл — синтетический WAV; снимки показывают формы и состояние приложения, а не подтверждают слышимое воспроизведение.
 
 ## Поиск и проверка проекта
 
@@ -22,6 +32,14 @@
 
 | Файл | Экран |
 | --- | --- |
+| [studio-nodes-ru.png](studio-nodes-ru.png) | Группа узлов, комментарий и миникарта |
+| [studio-logic-ru.png](studio-logic-ru.png) | Переменные и условие с двумя выходами |
+| [studio-characters-ru.png](studio-characters-ru.png) | Каталог персонажей, эмоция и координаты |
+| [studio-audio-ru.png](studio-audio-ru.png) | Музыка, эффект, голос, громкость и переход |
+| [studio-light.png](studio-light.png) | Звуковой инспектор в светлой теме |
+| [studio-reader-ru.png](studio-reader-ru.png) | Чтение, громкость каналов и говорящий персонаж |
+| [studio-backlog-ru.png](studio-backlog-ru.png) | Журнал пройденных реплик |
+| [studio-small-ja.png](studio-small-ja.png) | Персонажи на японском при минимальном размере окна |
 | [search-ru.png](search-ru.png) | Поиск на русском и просмотр найденной реплики |
 | [search-light.png](search-light.png) | Поиск в светлой теме |
 | [search-en.png](search-en.png) | Search — English |

@@ -1,4 +1,6 @@
+use crate::{Assignment, AudioCue, Character, Condition, NodeKind, Sprite};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const FORMAT_VERSION: u32 = 1;
 
@@ -10,6 +12,10 @@ pub struct Project {
     pub title: String,
     pub start_scene: String,
     pub scenes: Vec<Scene>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub variables: BTreeMap<String, i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub characters: Vec<Character>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +35,22 @@ pub struct Scene {
     /// Authoring coordinates; old projects need no migration. Excluded from game saves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_position: Option<NodePosition>,
+    #[serde(default, skip_serializing_if = "NodeKind::is_default")]
+    pub kind: NodeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<Condition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub otherwise: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment: Option<Assignment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioCue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sprites: Vec<Sprite>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,18 +60,22 @@ pub struct NodePosition {
     pub y: i32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Line {
     pub speaker: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Choice {
     pub text: String,
     pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<Condition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +97,9 @@ pub enum Field {
     NextScene,
     Background,
     Portrait,
+    Logic,
+    Audio,
+    Characters,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +122,8 @@ impl Project {
             title: "Моя новелла".into(),
             start_scene: "scene-1".into(),
             scenes: vec![Scene::new("scene-1", "Начало")],
+            variables: BTreeMap::new(),
+            characters: vec![],
         }
     }
 
@@ -103,6 +134,36 @@ impl Project {
 
     pub fn scene(&self, id: &str) -> Option<&Scene> {
         self.scenes.iter().find(|scene| scene.id == id)
+    }
+
+    pub fn asset_references(&self) -> Vec<(Option<String>, Field, &str)> {
+        let mut result = vec![];
+        for scene in &self.scenes {
+            for (field, path) in [
+                (Field::Background, &scene.background),
+                (Field::Portrait, &scene.portrait),
+            ] {
+                if let Some(path) = path {
+                    result.push((Some(scene.id.clone()), field, path.as_str()));
+                }
+            }
+            if let Some(audio) = &scene.audio {
+                for path in [&audio.music, &audio.effect].into_iter().flatten() {
+                    result.push((Some(scene.id.clone()), Field::Audio, path));
+                }
+            }
+            for line in &scene.lines {
+                if let Some(path) = &line.voice {
+                    result.push((Some(scene.id.clone()), Field::Audio, path));
+                }
+            }
+        }
+        for character in &self.characters {
+            for expression in &character.expressions {
+                result.push((None, Field::Characters, expression.image.as_str()));
+            }
+        }
+        result
     }
 
     pub fn next_scene_id(&self) -> String {
@@ -127,6 +188,8 @@ impl Project {
         let mut story = self.clone();
         for scene in &mut story.scenes {
             scene.node_position = None;
+            scene.group.clear();
+            scene.note.clear();
         }
         story.signature()
     }
@@ -166,10 +229,19 @@ impl Scene {
             lines: vec![Line {
                 speaker: "".into(),
                 text: "Здесь начинается ваша история.".into(),
+                voice: None,
             }],
             choices: vec![],
             next: None,
             node_position: None,
+            kind: NodeKind::Dialogue,
+            condition: None,
+            otherwise: None,
+            assignment: None,
+            audio: None,
+            sprites: vec![],
+            group: String::new(),
+            note: String::new(),
         }
     }
 }

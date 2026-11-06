@@ -1,0 +1,126 @@
+{
+  "format_version": 1,
+  "id": "rinva-studio-branching-demo",
+  "title": "До первого света · доверие",
+  "start_scene": "station",
+  "scenes": [
+    {
+      "id": "station",
+      "name": "01 · Последний поезд",
+      "background": null,
+      "portrait": null,
+      "lines": [
+        {
+          "speaker": "",
+          "text": "На станции погасло табло. В тёмном стекле осталось только наше отражение."
+        },
+        {
+          "speaker": "Мира",
+          "text": "До рассвета ещё час. Если уйдём сейчас, успеем к маяку."
+        },
+        {
+          "speaker": "Мира",
+          "text": "Или останемся. Иногда самое трудное — никуда не бежать."
+        }
+      ],
+      "choices": [
+        {
+          "text": "Пойти к маяку",
+          "target": "trust-up"
+        },
+        {
+          "text": "Остаться на станции",
+          "target": "trust-check"
+        }
+      ],
+      "next": null,
+      "note": "Помощь повышает доверие. На узле условия выбирается маршрут."
+    },
+    {
+      "id": "lighthouse",
+      "name": "02 · Дорога к морю",
+      "background": null,
+      "portrait": null,
+      "lines": [
+        {
+          "speaker": "",
+          "text": "За последними домами начался ветер. Мира застегнула мою куртку до подбородка и первая шагнула на тропу."
+        },
+        {
+          "speaker": "Мира",
+          "text": "Смотри. Уже светает."
+        }
+      ],
+      "choices": [],
+      "next": "ending"
+    },
+    {
+      "id": "platform",
+      "name": "03 · На платформе",
+      "background": null,
+      "portrait": null,
+      "lines": [
+        {
+          "speaker": "",
+          "text": "Мы сели на холодную скамью. Впервые за эту ночь тишину не хотелось заполнять словами."
+        },
+        {
+          "speaker": "Мира",
+          "text": "Следующий поезд будет утром. У нас есть время."
+        }
+      ],
+      "choices": [],
+      "next": "ending"
+    },
+    {
+      "id": "ending",
+      "name": "04 · Первый свет",
+      "background": null,
+      "portrait": null,
+      "lines": [
+        {
+          "speaker": "",
+          "text": "Город понемногу обретал цвет. Я всё ещё не знал, что скажу завтра. Но теперь знал, кому."
+        }
+      ],
+      "choices": [],
+      "next": "finish"
+    },
+    {
+      "id": "trust-up",
+      "name": "Помочь Мире",
+      "kind": "set_variable",
+      "lines": [],
+      "assignment": {
+        "variable": "trust",
+        "operation": "add",
+        "value": 1
+      },
+      "next": "trust-check",
+      "group": "Решение"
+    },
+    {
+      "id": "trust-check",
+      "name": "Доверие ≥ 1",
+      "kind": "condition",
+      "lines": [],
+      "condition": {
+        "variable": "trust",
+        "comparison": "at_least",
+        "value": 1
+      },
+      "next": "lighthouse",
+      "otherwise": "platform",
+      "group": "Решение"
+    },
+    {
+      "id": "finish",
+      "name": "Конец",
+      "kind": "end",
+      "lines": []
+    }
+  ],
+  "variables": {
+    "trust": 0
+  }
+}

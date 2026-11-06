@@ -22,6 +22,46 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
             y: (q.y * scale).round() as i32,
         }
     };
+    let mut groups: std::collections::BTreeMap<&str, (f32, f32, f32, f32)> =
+        std::collections::BTreeMap::new();
+    for (s, point) in app.document.project.scenes.iter().zip(&points) {
+        if !s.group.is_empty() {
+            let b = groups.entry(&s.group).or_insert((
+                point.x,
+                point.y,
+                point.x + graph::NODE_WIDTH,
+                point.y + graph::height(s),
+            ));
+            b.0 = b.0.min(point.x);
+            b.1 = b.1.min(point.y);
+            b.2 = b.2.max(point.x + graph::NODE_WIDTH);
+            b.3 = b.3.max(point.y + graph::height(s));
+        }
+    }
+    for (name, (x, y, r, b)) in groups {
+        let a = pixel(Point::new(x - 16., y - 38.));
+        let b = pixel(Point::new(r + 16., b + 16.));
+        let rect = RECT {
+            left: a.x,
+            top: a.y,
+            right: b.x,
+            bottom: b.y,
+        };
+        ui::rounded(dc, rect, p.field, p.border, (4. * scale) as i32);
+        ui::text(
+            dc,
+            name,
+            RECT {
+                left: a.x + 8,
+                top: a.y + 6,
+                right: b.x - 8,
+                bottom: a.y + (28. * scale) as i32,
+            },
+            p.muted,
+            app.resources.small,
+            DT_SINGLELINE | DT_END_ELLIPSIS,
+        );
+    }
     let edge = |from: POINT, to: POINT, color: u32| {
         let pen = CreatePen(PS_SOLID, (2. * scale).round() as i32, color);
         let old = SelectObject(dc, pen);
@@ -75,10 +115,10 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
         scene,
         port,
         pointer,
-    }) = g.drag
+    }) = &g.drag
     {
         edge(
-            pixel(graph::output(points[scene], port)),
+            pixel(graph::output(points[*scene], *port)),
             POINT {
                 x: (pointer.x * scale) as i32,
                 y: (pointer.y * scale) as i32,
@@ -117,7 +157,7 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
         if r.right < 0 || r.left > rect.right || r.bottom < 0 || r.top > rect.bottom {
             continue;
         }
-        let selected = i == app.selected_scene;
+        let selected = i == app.selected_scene || g.selection.contains(&scene.id);
         let border = if selected { p.accent } else { p.border };
         ui::rounded(dc, r, p.surface, border, (4. * scale).round() as i32);
         let margin = (14. * g.zoom * scale).round() as i32;
@@ -135,7 +175,11 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
             font,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
         );
-        let subtitle = if scene.id == app.document.project.start_scene {
+        let subtitle = if scene.kind != rinva_core::NodeKind::Dialogue {
+            app.t(studio::kind_name(scene.kind)).to_owned()
+        } else if !scene.note.is_empty() {
+            scene.note.clone()
+        } else if scene.id == app.document.project.start_scene {
             app.t("Начало").to_owned()
         } else {
             scene
@@ -168,8 +212,11 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
             let connected = graph::target(scene, port).is_some();
             let selected_port = g.selected_port == Some((i, port));
             let label = match port {
+                Port::Otherwise => app.t("Если нет"),
                 Port::Next => {
-                    if connected {
+                    if scene.kind == rinva_core::NodeKind::Condition {
+                        app.t("Если да")
+                    } else if connected {
                         app.t("Переход")
                     } else {
                         app.t("Конец истории")
@@ -222,6 +269,20 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
         }
     }
     DeleteObject(font);
+    if let Some(Drag::Marquee { start, pointer, .. }) = &g.drag {
+        let a = pixel(*start);
+        let b = pixel(*pointer);
+        let r = RECT {
+            left: a.x.min(b.x),
+            top: a.y.min(b.y),
+            right: a.x.max(b.x),
+            bottom: a.y.max(b.y),
+        };
+        DrawFocusRect(dc, &r);
+    }
+    if g.minimap {
+        paint_map(app, dc, rect);
+    }
 }
 unsafe fn draw_pin(dc: HDC, point: POINT, scale: f32, p: Palette, active: bool) {
     let r = (5. * scale).round().max(4.) as i32;
@@ -246,6 +307,110 @@ unsafe fn draw_pin(dc: HDC, point: POINT, scale: f32, p: Palette, active: bool) 
     DeleteObject(pen);
 }
 
+fn map_geometry(app: &App, size: Point) -> (Point, Point, Point, f32) {
+    let points = graph::positions(&app.document.project);
+    let min = Point::new(
+        points.iter().map(|p| p.x).fold(f32::INFINITY, f32::min) - 20.,
+        points.iter().map(|p| p.y).fold(f32::INFINITY, f32::min) - 20.,
+    );
+    let max = Point::new(
+        points
+            .iter()
+            .map(|p| p.x + graph::NODE_WIDTH)
+            .fold(f32::NEG_INFINITY, f32::max)
+            + 20.,
+        points
+            .iter()
+            .zip(&app.document.project.scenes)
+            .map(|(p, s)| p.y + graph::height(s))
+            .fold(f32::NEG_INFINITY, f32::max)
+            + 20.,
+    );
+    let top = Point::new(size.x - 196., size.y - 132.);
+    let scale = (180. / (max.x - min.x).max(1.)).min(108. / (max.y - min.y).max(1.));
+    (top, min, max, scale)
+}
+unsafe fn map_click(app: &mut App, point: Point) -> bool {
+    let size = app.canvas_size();
+    let (top, min, _, scale) = map_geometry(app, size);
+    if point.x < top.x || point.x > top.x + 188. || point.y < top.y || point.y > top.y + 124. {
+        return false;
+    }
+    let world = Point::new(
+        min.x + (point.x - top.x - 4.) / scale,
+        min.y + (point.y - top.y - 4.) / scale,
+    );
+    app.graph.pan = Point::new(
+        size.x / 2. - world.x * app.graph.zoom,
+        size.y / 2. - world.y * app.graph.zoom,
+    );
+    true
+}
+unsafe fn paint_map(app: &App, dc: HDC, bounds: RECT) {
+    let size = Point::new(
+        bounds.right as f32 / app.scale,
+        bounds.bottom as f32 / app.scale,
+    );
+    let (top, min, _, zoom) = map_geometry(app, size);
+    let px = |v: f32| (v * app.scale).round() as i32;
+    let rect = RECT {
+        left: px(top.x),
+        top: px(top.y),
+        right: px(top.x + 188.),
+        bottom: px(top.y + 124.),
+    };
+    ui::rounded(dc, rect, app.palette.surface, app.palette.border, px(4.));
+    let state = SaveDC(dc);
+    IntersectClipRect(
+        dc,
+        rect.left + 2,
+        rect.top + 2,
+        rect.right - 2,
+        rect.bottom - 2,
+    );
+    let point = |p: Point| {
+        Point::new(
+            top.x + 4. + (p.x - min.x) * zoom,
+            top.y + 4. + (p.y - min.y) * zoom,
+        )
+    };
+    for (s, origin) in app
+        .document
+        .project
+        .scenes
+        .iter()
+        .zip(graph::positions(&app.document.project))
+    {
+        let p = point(origin);
+        ui::fill(
+            dc,
+            RECT {
+                left: px(p.x),
+                top: px(p.y),
+                right: px(p.x + graph::NODE_WIDTH * zoom).max(px(p.x) + 2),
+                bottom: px(p.y + graph::height(s) * zoom).max(px(p.y) + 2),
+            },
+            if s.id == app.scene().id || app.graph.selection.contains(&s.id) {
+                app.palette.accent
+            } else {
+                app.palette.muted
+            },
+        );
+    }
+    let a = point(app.graph.world(Point::default()));
+    let b = point(app.graph.world(size));
+    let r = RECT {
+        left: px(a.x),
+        top: px(a.y),
+        right: px(b.x),
+        bottom: px(b.y),
+    };
+    let brush = CreateSolidBrush(app.palette.accent);
+    FrameRect(dc, &r, brush);
+    DeleteObject(brush);
+    RestoreDC(dc, state);
+}
+
 pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> bool {
     if !app.graph_mode || app.player.is_some() {
         return false;
@@ -262,8 +427,20 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
             app.graph.middle_drag = msg == WM_MBUTTONDOWN;
             app.document.finish_edit();
             SetFocus(hwnd);
+            if msg == WM_LBUTTONDOWN && app.graph.minimap && map_click(app, point) {
+                InvalidateRect(hwnd, null(), 0);
+                return true;
+            }
             let hit = app.graph.hit(&app.document.project, point);
-            if msg == WM_MBUTTONDOWN || GetKeyState(VK_SPACE as i32) < 0 || hit == Hit::Empty {
+            if hit == Hit::Empty && msg == WM_LBUTTONDOWN && GetKeyState(VK_SHIFT as i32) < 0 {
+                let at = app.graph.world(point);
+                app.graph.drag = Some(Drag::Marquee {
+                    start: at,
+                    pointer: at,
+                    original: app.graph.selection.clone(),
+                });
+            } else if msg == WM_MBUTTONDOWN || GetKeyState(VK_SPACE as i32) < 0 || hit == Hit::Empty
+            {
                 app.graph.drag = Some(Drag::Pan {
                     start: point,
                     original: app.graph.pan,
@@ -290,11 +467,41 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                         app.choices_tab = false;
                         let origin = graph::positions(&app.document.project)[i];
                         let world = app.graph.world(point);
-                        app.graph.drag = Some(Drag::Move {
-                            scene: i,
-                            offset: Point::new(world.x - origin.x, world.y - origin.y),
-                            preview: origin,
-                        });
+                        let id = app.document.project.scenes[i].id.clone();
+                        if GetKeyState(VK_CONTROL as i32) < 0 {
+                            if !app.graph.selection.insert(id.clone()) {
+                                app.graph.selection.remove(&id);
+                            }
+                            app.refresh();
+                            return true;
+                        }
+                        if !app.graph.selection.contains(&id) {
+                            app.graph.selection.clear();
+                            app.graph.selection.insert(id);
+                        }
+                        if app.graph.selection.len() > 1 {
+                            let points = graph::positions(&app.document.project);
+                            let origins = app
+                                .document
+                                .project
+                                .scenes
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, s)| app.graph.selection.contains(&s.id))
+                                .map(|(i, _)| (i, points[i]))
+                                .collect();
+                            app.graph.drag = Some(Drag::MoveMany {
+                                origins,
+                                start: world,
+                                delta: Point::default(),
+                            });
+                        } else {
+                            app.graph.drag = Some(Drag::Move {
+                                scene: i,
+                                offset: Point::new(world.x - origin.x, world.y - origin.y),
+                                preview: origin,
+                            });
+                        }
                     }
                     Hit::Input(i) => {
                         app.selected_scene = i;
@@ -407,22 +614,31 @@ pub unsafe fn input_event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPA
                 VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN => {
                     app.graph.cancel();
                     let i = app.selected_scene;
-                    let mut p = graph::positions(&app.document.project)[i];
+                    let p = graph::positions(&app.document.project)[i];
+                    let mut delta = Point::default();
                     let step = if GetKeyState(VK_SHIFT as i32) < 0 {
                         10.
                     } else {
                         1.
                     };
                     match w as u16 {
-                        VK_LEFT => p.x -= step,
-                        VK_RIGHT => p.x += step,
-                        VK_UP => p.y -= step,
-                        _ => p.y += step,
+                        VK_LEFT => delta.x -= step,
+                        VK_RIGHT => delta.x += step,
+                        VK_UP => delta.y -= step,
+                        _ => delta.y += step,
                     }
                     let layout = graph::positions(&app.document.project);
+                    let selection = app.graph.selection.clone();
                     app.document.change(|project| {
                         graph::freeze_positions(project, &layout);
-                        project.scenes[i].node_position = Some(p.position());
+                        for (n, s) in project.scenes.iter_mut().enumerate() {
+                            if n == i || selection.contains(&s.id) {
+                                let origin = if n == i { p } else { layout[n] };
+                                s.node_position = Some(
+                                    Point::new(origin.x + delta.x, origin.y + delta.y).position(),
+                                );
+                            }
+                        }
                     });
                     app.status = "Положение узлов изменено · Ctrl+S — сохранить".into();
                     app.refresh();
