@@ -184,6 +184,11 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     command(hwnd, game_ui::MENU);
     settle()?;
     let at_menu = line();
+    let probe = APP.with(|s| s.borrow().as_ref().unwrap().audio.probe())?;
+    check(
+        probe.contains("paused=true"),
+        "Audio worker ignored menu pause",
+    )?;
     APP.with(|s| {
         let mut s = s.borrow_mut();
         let a = s.as_mut().unwrap();
@@ -216,6 +221,48 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     check(line() != first, "Dialogue did not advance after menu")?;
     command(hwnd, GAME_LOAD);
     check(line() == first, "Quick load did not restore progress")?;
+    // A completed background save must not move the user's highlighted choice.
+    for _ in 0..8 {
+        let choice = APP.with(|s| {
+            matches!(
+                s.borrow()
+                    .as_ref()
+                    .unwrap()
+                    .player
+                    .as_ref()
+                    .unwrap()
+                    .frame(),
+                Frame::Choices { .. }
+            )
+        });
+        if choice {
+            break;
+        }
+        command(hwnd, ADVANCE);
+    }
+    check(
+        APP.with(|s| {
+            matches!(
+                s.borrow()
+                    .as_ref()
+                    .unwrap()
+                    .player
+                    .as_ref()
+                    .unwrap()
+                    .frame(),
+                Frame::Choices { .. }
+            )
+        }),
+        "Choice fixture was not reached",
+    )?;
+    SendMessageW(handle(GAME_CHOICES), LB_SETCURSEL, 1, 0);
+    APP.with(|s| game_ui::save_slot(s.borrow_mut().as_mut().unwrap(), Slot::Auto))?;
+    settle()?;
+    check(
+        SendMessageW(handle(GAME_CHOICES), LB_GETCURSEL, 0, 0) == 1,
+        "Background save changed highlighted choice",
+    )?;
+    command(hwnd, GAME_LOAD);
     // Auto uses its own atomic record and does not touch a manual slot.
     APP.with(|s| game_ui::save_slot(s.borrow_mut().as_mut().unwrap(), Slot::Auto))?;
     settle()?;
@@ -253,6 +300,24 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     check(
         GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_CAPTION == 0,
         "Fullscreen retained its caption",
+    )?;
+    let mut monitor: MONITORINFO = std::mem::zeroed();
+    monitor.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    GetMonitorInfoW(
+        MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+        &mut monitor,
+    );
+    let mut full: RECT = std::mem::zeroed();
+    GetWindowRect(hwnd, &mut full);
+    check(
+        (full.left, full.top, full.right, full.bottom)
+            == (
+                monitor.rcMonitor.left,
+                monitor.rcMonitor.top,
+                monitor.rcMonitor.right,
+                monitor.rcMonitor.bottom,
+            ),
+        "Fullscreen does not fit its monitor",
     )?;
     command(hwnd, game_ui::FULLSCREEN);
     let mut restored: RECT = std::mem::zeroed();

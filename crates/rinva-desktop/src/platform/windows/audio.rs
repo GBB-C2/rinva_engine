@@ -110,6 +110,8 @@ struct Channel {
     fade: Duration,
     fade_at: Instant,
     base: f64,
+    paused_at: Option<Instant>,
+    resume_playing: bool,
 }
 impl Channel {
     fn open(
@@ -161,9 +163,28 @@ impl Channel {
                 fade: Duration::ZERO,
                 fade_at: Instant::now(),
                 base: 1.,
+                paused_at: None,
+                resume_playing: false,
             })
         };
         create().map_err(|e| format!("Не удалось воспроизвести звук: {} — {e}", path.display()))
+    }
+    fn pause(&mut self, paused: bool) {
+        if paused {
+            if self.paused_at.is_none() {
+                self.resume_playing = self.active();
+                self.paused_at = Some(Instant::now());
+                let _ = self.player.Pause();
+            }
+        } else if let Some(at) = self.paused_at.take() {
+            let elapsed = at.elapsed();
+            self.fade_at += elapsed;
+            self.started += elapsed;
+            if self.resume_playing {
+                let _ = self.player.Play();
+            }
+            self.resume_playing = false;
+        }
     }
     fn fade_to(&mut self, target: f64, millis: u32) {
         self.from = self.gain;
@@ -217,7 +238,7 @@ fn worker(rx: mpsc::Receiver<Command>, errors: mpsc::Sender<String>, busy: Arc<A
         match rx.recv_timeout(Duration::from_millis(20)) {
             Ok(Command::Probe(reply)) => {
                 let _ = reply.send(format!(
-                    "music={} voice={} effects={} volumes={:?} music_gain={:?} music_duration={:?}",
+                    "music={} voice={} effects={} volumes={:?} music_gain={:?} music_duration={:?} paused={}",
                     music.is_some(),
                     voice.is_some(),
                     effects.len(),
@@ -230,31 +251,20 @@ fn worker(rx: mpsc::Receiver<Command>, errors: mpsc::Sender<String>, busy: Arc<A
                             .PlaybackSession()
                             .and_then(|s| s.NaturalDuration())
                             .ok())
-                        .map(|t| t.Duration)
+                        .map(|t| t.Duration),
+                    paused_at.is_some()
                 ));
             }
             Ok(Command::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Ok(Command::Pause(paused)) => {
-                let elapsed = if paused {
-                    if paused_at.is_none() {
-                        paused_at = Some(Instant::now());
-                    }
-                    Duration::ZERO
-                } else {
-                    paused_at.take().map(|at| at.elapsed()).unwrap_or_default()
-                };
+                paused_at = if paused { Some(Instant::now()) } else { None };
                 for c in music
                     .iter_mut()
                     .chain(fading.iter_mut())
                     .chain(voice.iter_mut())
                     .chain(effects.iter_mut())
                 {
-                    if paused {
-                        let _ = c.player.Pause();
-                    } else {
-                        c.fade_at += elapsed;
-                        let _ = c.player.Play();
-                    }
+                    c.pause(paused);
                 }
             }
             Ok(Command::Stop) => {
@@ -338,7 +348,7 @@ fn worker(rx: mpsc::Receiver<Command>, errors: mpsc::Sender<String>, busy: Arc<A
                 .chain(voice.iter_mut())
                 .chain(effects.iter_mut())
             {
-                let _ = c.player.Pause();
+                c.pause(true);
             }
         }
         if paused_at.is_some() {

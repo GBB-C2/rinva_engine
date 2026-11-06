@@ -6,7 +6,7 @@ pub const SPEED: u16 = 3003;
 pub const MUSIC: u16 = 3004;
 pub const EFFECTS: u16 = 3005;
 pub const VOICE: u16 = 3006;
-const LOG_TEXT: u16 = 3007;
+pub const LOG_TEXT: u16 = 3007;
 const LABELS: [u16; 4] = [5100, 5101, 5102, 5103];
 pub unsafe fn create(
     controls: &mut Controls,
@@ -20,7 +20,7 @@ pub unsafe fn create(
     for id in [SPEED, MUSIC, EFFECTS, VOICE] {
         controls.combo(hwnd, id, resources.font)?;
     }
-    controls.edit(hwnd, LOG_TEXT, true, resources.font)?;
+    controls.edit(hwnd, LOG_TEXT, true, resources.dialogue)?;
     SendMessageW(controls.get(LOG_TEXT), EM_SETREADONLY, 1, 0);
     SendMessageW(controls.get(LOG_TEXT), EM_SETLIMITTEXT, 4_000_000, 0);
     for id in LABELS {
@@ -94,6 +94,9 @@ pub unsafe fn refresh(app: &mut App) {
                 .min(4),
             true,
         );
+    }
+    if app.player_only && !app.game.session {
+        return;
     }
     let Some(player) = &mut app.player else {
         if app.reader.key.take().is_some() {
