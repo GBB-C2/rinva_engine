@@ -72,6 +72,32 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         APP.with(|s| s.borrow().as_ref().unwrap().studio.pane == studio::Pane::Interface),
         "Selecting a UI node did not open its inspector",
     )?;
+    // A panel executed after a button must not cover it in the save thumbnail.
+    APP.with(|s| {
+        let mut s = s.borrow_mut();
+        let a = s.as_mut().unwrap();
+        let mut late = fixture.clone();
+        let mut panel = late.scenes[1].clone();
+        panel.id = "late-panel".into();
+        panel.ui = late.scenes[4].ui.clone();
+        panel.next = Some("screen".into());
+        late.scenes[5].next = Some(panel.id.clone());
+        late.scenes.push(panel);
+        a.player = Some(Player::new(&late)?);
+        let result = paint::thumbnail(a);
+        a.player = None;
+        let bytes = result?;
+        let image = image::load_from_memory(&bytes)
+            .map_err(|e| e.to_string())?
+            .to_rgba8();
+        let pixel = image.get_pixel(59, 114);
+        check(
+            pixel[0] as u32 == a.palette.field & 255,
+            "Late panel covered button in save thumbnail",
+        )?;
+        a.refresh();
+        Ok::<_, String>(())
+    })?;
     // Editing is one undoable transaction, and the native label refreshes immediately.
     edit(interface_ui::TEXT, "Получить монету · 海");
     command(hwnd, interface_ui::APPLY);
@@ -156,6 +182,14 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
             == APP.with(|s| s.borrow().as_ref().unwrap().preview_share),
         "Preview height preference not persisted",
     )?;
+    APP.with(|s| {
+        let mut s = s.borrow_mut();
+        let a = s.as_mut().unwrap();
+        a.graph.zoom = 0.7;
+        a.graph.pan = Point::new(16., 0.);
+        a.refresh();
+    });
+    pump();
     for dark in [true, false] {
         if APP.with(|s| s.borrow().as_ref().unwrap().dark) != dark {
             command(hwnd, THEME);
