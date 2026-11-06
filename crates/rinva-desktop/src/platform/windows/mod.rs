@@ -1,4 +1,5 @@
 mod audio;
+mod dpi;
 mod fonts;
 mod navigation;
 mod navigation_smoke;
@@ -30,7 +31,7 @@ use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
     System::LibraryLoader::*,
-    UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
+    UI::{Controls::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
 };
 
 const NEW: u16 = 101;
@@ -267,7 +268,7 @@ impl App {
         } else {
             Some(recovery::Session::new(&settings_dir().join("recovery"))?)
         };
-        let scale = GetDpiForWindow(hwnd) as f32 / 96.;
+        let scale = dpi::for_window(hwnd) as f32 / 96.;
         let settings = storage::read_json::<Settings>(&settings_dir().join("settings.json"))
             .unwrap_or(Settings {
                 dark: true,
@@ -1995,7 +1996,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         }
         WM_GETMINMAXINFO => {
             let info = &mut *(l as *mut MINMAXINFO);
-            let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.;
+            let scale = dpi::for_window(hwnd).max(96) as f32 / 96.;
             info.ptMinTrackSize.x = (1120. * scale) as i32;
             info.ptMinTrackSize.y = (760. * scale) as i32;
             // CI's virtual desktop is small; PrintWindow can still capture a real larger HWND.
@@ -2417,8 +2418,18 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         let _ = SMOKE_TRACE.set(output.join("native-trace.txt"));
     }
     smoke_trace("startup");
+    dpi::initialize(
+        SMOKE_TRACE.get().is_some() && args.iter().skip(2).any(|arg| arg == "--legacy-dpi"),
+    );
+    smoke_trace(if dpi::uses_fallback() {
+        "DPI: monitor fallback"
+    } else {
+        "DPI: window API"
+    });
     unsafe {
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // The embedded manifest sets DPI awareness before creating any windows.
+        // A static SetProcessDpiAwarenessContext import prevents older Windows 10
+        // loaders from reaching main, even if the call would be optional.
         let instance = GetModuleHandleW(null());
         let class_name = wide("RinvaStudioWindow");
         let mut class: WNDCLASSW = std::mem::zeroed();

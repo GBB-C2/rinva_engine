@@ -3,3 +3,5 @@
 *.rinva.bak
 *.rinva.autosave
 /smoke-output/
+/smoke-debug-output/
+/.inkcode/
