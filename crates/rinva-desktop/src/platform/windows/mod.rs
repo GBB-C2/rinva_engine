@@ -305,7 +305,7 @@ impl App {
             controls.edit(hwnd, id, false, font)?;
         }
         controls.edit(hwnd, BODY, true, font)?;
-        controls.edit(hwnd, TRANSCRIPT, true, font)?;
+        controls.edit(hwnd, TRANSCRIPT, true, resources.dialogue)?;
         SendMessageW(controls.get(TRANSCRIPT), EM_SETREADONLY, 1, 0);
         for id in [SCENES, ITEMS, GAME_CHOICES] {
             controls.list(hwnd, id, font)?;
@@ -351,7 +351,7 @@ impl App {
             navigation: navigation::Navigation::default(),
             studio: studio::Studio::default(),
             stage: stage_ui::Stage::default(),
-            game: game_ui::Game::default(),
+            game: game_ui::Game::initial(player_only),
             reader,
             audio: audio::Audio::new(),
             left_width: settings.left_width.clamp(180, 300),
@@ -939,7 +939,15 @@ impl App {
                 ),
             };
             self.controls.text(TRANSCRIPT, &text);
-            self.controls.fill_list(GAME_CHOICES, &choices, 0, false);
+            let selection = if self.reader.key.as_ref().is_some_and(|(serial, key)| {
+                *serial == player.serial() && *key == player.line_key()
+            }) {
+                self.controls.selection(GAME_CHOICES, false).unwrap_or(0)
+            } else {
+                0
+            };
+            self.controls
+                .fill_list(GAME_CHOICES, &choices, selection, false);
             self.controls.text(ADVANCE, self.t(label));
         }
         self.controls.text(
@@ -1669,12 +1677,14 @@ impl App {
             self.language,
             self.reader.settings.text_size,
         );
-        for &handle in self.controls.handles.values() {
+        for (&id, &handle) in &self.controls.handles {
             SendMessageW(
                 handle,
                 WM_SETFONT,
                 if ui::is_class(handle, "STATIC") {
                     resources.small as usize
+                } else if matches!(id, TRANSCRIPT | reader_ui::LOG_TEXT) {
+                    resources.dialogue as usize
                 } else {
                     resources.font as usize
                 },

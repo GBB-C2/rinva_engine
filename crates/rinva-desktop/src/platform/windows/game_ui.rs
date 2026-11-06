@@ -60,6 +60,12 @@ pub struct Game {
     pub closing: bool,
 }
 impl Game {
+    pub fn initial(title: bool) -> Self {
+        Self {
+            page: title.then_some(Page::Home),
+            ..Self::default()
+        }
+    }
     pub fn busy(&self) -> bool {
         self.writer.is_some() || self.scan.is_some()
     }

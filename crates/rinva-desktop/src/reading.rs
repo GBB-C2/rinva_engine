@@ -34,6 +34,8 @@ pub struct Reader {
 impl Reader {
     pub fn new(mut settings: ReadingSettings) -> Self {
         settings.speed = settings.speed.min(120);
+        settings.dialog_style = settings.dialog_style.min(1);
+        settings.text_size = settings.text_size.min(2);
         settings.volumes = settings.volumes.map(|v| v.min(100));
         Self {
             settings,
