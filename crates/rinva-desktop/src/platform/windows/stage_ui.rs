@@ -162,6 +162,7 @@ pub unsafe fn paint(app: &App, dc: HDC, bounds: RECT) {
     }
     let f = Rect::frame(bounds.right as f32, bounds.bottom as f32);
     let state = SaveDC(dc);
+    SetBkMode(dc, TRANSPARENT as i32);
     IntersectClipRect(
         dc,
         f.x as i32,
