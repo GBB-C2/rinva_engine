@@ -293,6 +293,14 @@ impl Controls {
             font,
         )?;
         SetWindowTheme(self.get(id), wide("").as_ptr(), wide("").as_ptr());
+        let data = Box::into_raw(Box::new(ComboStyle {
+            palette: self.palette,
+            scale: self.scale,
+        }));
+        if SetWindowSubclass(self.get(id), Some(combo_proc), 3, data as usize) == 0 {
+            drop(Box::from_raw(data));
+            return Err("Could not style native combo box".into());
+        }
         SendMessageW(
             self.get(id),
             CB_SETITEMHEIGHT,
@@ -361,7 +369,10 @@ impl Controls {
         window_text(self.get(id))
     }
     pub unsafe fn show(&self, id: u16, show: bool) {
-        ShowWindow(self.get(id), if show { SW_SHOW } else { SW_HIDE });
+        let handle = self.get(id);
+        if (GetWindowLongPtrW(handle, GWL_STYLE) as u32 & WS_VISIBLE != 0) != show {
+            ShowWindow(handle, if show { SW_SHOW } else { SW_HIDE });
+        }
         if let Some(bar) = self.scrolls.get(&id) {
             if show {
                 scroll::sync(*bar);
@@ -433,6 +444,12 @@ impl Controls {
                 SendMessageW(handle, CB_SETITEMHEIGHT, 0, (28. * scale) as isize);
             }
             let mut data = 0;
+            if GetWindowSubclass(handle, Some(combo_proc), 3, &mut data) != 0 {
+                let style = &mut *(data as *mut ComboStyle);
+                style.palette = palette;
+                style.scale = scale;
+                InvalidateRect(handle, null(), 0);
+            }
             if GetWindowSubclass(handle, Some(field_proc), 2, &mut data) != 0 {
                 let s = &mut *(data as *mut FieldStyle);
                 s.palette = palette;
@@ -719,6 +736,84 @@ unsafe extern "system" fn field_proc(
             | LB_SETTOPINDEX
     ) {
         PostMessageW(GetParent(hwnd), scroll::SYNC_MESSAGE, 0, 0);
+    }
+    result
+}
+
+struct ComboStyle {
+    palette: Palette,
+    scale: f32,
+}
+/// Keep the native list, keyboard navigation and accessibility; paint the closed face.
+unsafe extern "system" fn combo_proc(
+    hwnd: HWND,
+    msg: u32,
+    w: WPARAM,
+    l: LPARAM,
+    id: usize,
+    data: usize,
+) -> LRESULT {
+    if msg == WM_NCDESTROY {
+        RemoveWindowSubclass(hwnd, Some(combo_proc), id);
+        drop(Box::from_raw(data as *mut ComboStyle));
+        return DefSubclassProc(hwnd, msg, w, l);
+    }
+    let result = DefSubclassProc(hwnd, msg, w, l);
+    if matches!(msg, WM_SETFOCUS | WM_KILLFOCUS | WM_ENABLE | CB_SETCURSEL) {
+        InvalidateRect(hwnd, null(), 0);
+    }
+    if matches!(msg, WM_PAINT | WM_PRINTCLIENT | WM_PRINT) {
+        let dc = if msg == WM_PAINT {
+            GetDC(hwnd)
+        } else {
+            w as HDC
+        };
+        if !dc.is_null() {
+            let style = &*(data as *const ComboStyle);
+            let p = style.palette;
+            let px = |n: f32| (n * style.scale).round() as i32;
+            let mut r: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut r);
+            let mut info: COMBOBOXINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<COMBOBOXINFO>() as u32;
+            if GetComboBoxInfo(hwnd, &mut info) != 0 {
+                let state = SaveDC(dc);
+                let enabled = IsWindowEnabled(hwnd) != 0;
+                let focused = GetFocus() == hwnd || GetFocus() == info.hwndItem;
+                fill(dc, r, p.surface);
+                rounded(
+                    dc,
+                    r,
+                    p.field,
+                    if focused { p.accent } else { p.border },
+                    px(4.),
+                );
+                let mut label = r;
+                label.left += px(10.);
+                label.right = info.rcButton.left - px(6.);
+                text(
+                    dc,
+                    &window_text(hwnd),
+                    label,
+                    if enabled { p.text } else { p.muted },
+                    SendMessageW(hwnd, WM_GETFONT, 0, 0) as HFONT,
+                    DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                );
+                let x = (info.rcButton.left + info.rcButton.right) / 2;
+                let y = (info.rcButton.top + info.rcButton.bottom) / 2;
+                let pen = CreatePen(PS_SOLID, px(1.).max(1), p.muted);
+                let old = SelectObject(dc, pen);
+                MoveToEx(dc, x - px(3.), y - px(1.), null_mut());
+                LineTo(dc, x, y + px(2.));
+                LineTo(dc, x + px(3.) + 1, y - px(1.) - 1);
+                SelectObject(dc, old);
+                DeleteObject(pen);
+                RestoreDC(dc, state);
+            }
+            if msg == WM_PAINT {
+                ReleaseDC(hwnd, dc);
+            }
+        }
     }
     result
 }

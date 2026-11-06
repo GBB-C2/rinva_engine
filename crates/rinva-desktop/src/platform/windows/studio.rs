@@ -53,6 +53,7 @@ pub const RESET_LAYOUT: u16 = 2066;
 pub const NEW_KIND: u16 = 2070;
 pub const NEW_NODE: u16 = 2071;
 pub const MINIMAP: u16 = 2072;
+pub const PREVIEW_HEIGHT: u16 = 2073;
 const LABEL_BASE: u16 = 5000;
 const LABEL_COUNT: u16 = 14;
 pub const KINDS: [NodeKind; 11] = [
@@ -165,6 +166,7 @@ const COMBOS: &[u16] = &[
     LEFT_WIDTH,
     RIGHT_WIDTH,
     NEW_KIND,
+    PREVIEW_HEIGHT,
 ];
 pub unsafe fn create(
     controls: &mut Controls,
@@ -369,6 +371,8 @@ pub unsafe fn layout(app: &App, w: i32, h: i32) {
             place(LEFT_WIDTH, x, h - 166, (iw - 8) / 2, 220);
             place(RIGHT_WIDTH, x + (iw + 8) / 2, h - 166, (iw - 8) / 2, 220);
             place(RESET_LAYOUT, x, h - 112, iw, 32);
+            label(6, h - 66, "Просмотр, %");
+            place(PREVIEW_HEIGHT, x + iw - 84, h - 72, 84, 180);
         }
         Pane::Text | Pane::Interface => {}
     }
@@ -385,6 +389,18 @@ unsafe fn fill(app: &App, id: u16, values: &[&str], selected: usize) {
     );
 }
 pub unsafe fn refresh(app: &mut App) {
+    let mut heights = vec![25, 35, 45, 55, 65, app.preview_share];
+    heights.sort_unstable();
+    heights.dedup();
+    app.controls.fill_list(
+        PREVIEW_HEIGHT,
+        &heights.iter().map(|n| format!("{n}%")).collect::<Vec<_>>(),
+        heights
+            .iter()
+            .position(|n| *n == app.preview_share)
+            .unwrap_or(0),
+        true,
+    );
     if app.studio.inspected != app.scene().id {
         app.studio.inspected = app.scene().id.clone();
         if app.scene().kind.interface() {
@@ -860,6 +876,9 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
                     app.document.project.scenes.iter().any(|s| {
                         s.condition.as_ref().is_some_and(|c| &c.variable == name)
                             || s.assignment.as_ref().is_some_and(|a| &a.variable == name)
+                            || s.ui
+                                .as_ref()
+                                .is_some_and(|ui| ui.text.contains(&format!("{{{name}}}")))
                             || s.choices
                                 .iter()
                                 .any(|c| c.condition.as_ref().is_some_and(|c| &c.variable == name))
@@ -874,6 +893,11 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
                         p.variables.remove(old);
                         if id == VAR_UPDATE {
                             for s in &mut p.scenes {
+                                if let Some(ui) = &mut s.ui {
+                                    ui.text = ui
+                                        .text
+                                        .replace(&format!("{{{old}}}"), &format!("{{{name}}}"));
+                                }
                                 for c in s.condition.iter_mut().chain(
                                     s.choices.iter_mut().filter_map(|c| c.condition.as_mut()),
                                 ) {
@@ -1200,7 +1224,14 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
         RESET_LAYOUT => {
             app.left_width = 224;
             app.right_width = 300;
+            app.preview_share = 45;
             app.persist_settings()?;
+        }
+        PREVIEW_HEIGHT => {
+            if let Ok(value) = app.controls.read(id).trim_end_matches('%').parse::<i32>() {
+                app.preview_share = value.clamp(25, 65);
+                app.persist_settings()?;
+            }
         }
         MINIMAP => {
             app.graph.minimap = !app.graph.minimap;

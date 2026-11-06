@@ -76,7 +76,7 @@
         "x": 16,
         "y": 36,
         "width": 68,
-        "height": 16,
+        "height": 22,
         "text": "До отправления — один выбор. Монеты: {coins}"
       },
       "node_position": {

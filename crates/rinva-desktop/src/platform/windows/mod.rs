@@ -328,7 +328,7 @@ impl App {
             CANVAS,
             "RinvaCanvas",
             language.text("Предпросмотр"),
-            WS_TABSTOP,
+            WS_TABSTOP | WS_CLIPCHILDREN,
             font,
         )?;
         controls.add(
@@ -557,6 +557,9 @@ impl App {
         let place =
             |id, x, y, width, height| self.controls.place(id, x, y, width, height, self.scale);
         for (&id, &handle) in &self.controls.handles {
+            if (interface_ui::BUTTON..interface_ui::BUTTON + 64).contains(&id) {
+                continue;
+            }
             let show = if self.player.is_some() {
                 matches!(
                     id,
@@ -733,6 +736,11 @@ impl App {
     unsafe fn fit_graph(&mut self) {
         let size = self.canvas_size();
         self.graph.fit(&self.document.project, size.x, size.y);
+        self.controls.text(
+            ZOOM_LABEL,
+            &format!("{}%", (self.graph.zoom * 100.).round() as i32),
+        );
+        InvalidateRect(self.controls.get(GRAPH_CANVAS), null(), 0);
     }
 
     unsafe fn refresh(&mut self) {
@@ -1803,6 +1811,23 @@ impl App {
         if self.player.is_none() {
             let w = (rect.right as f32 / self.scale) as i32;
             let (center, right, _, _) = self.panel_geometry(w);
+            if self.graph_mode && self.navigation.mode.is_none() {
+                let h = (rect.bottom as f32 / self.scale) as i32;
+                let y = 126 + self.preview_height(h);
+                let (_, _, cw, _) = self.panel_geometry(w);
+                ui::rounded(
+                    dc,
+                    RECT {
+                        left: px(center + cw / 2 - 22),
+                        top: px(y - 1),
+                        right: px(center + cw / 2 + 22),
+                        bottom: px(y + 1),
+                    },
+                    self.palette.border,
+                    self.palette.border,
+                    px(2),
+                );
+            }
             ui::rounded(
                 dc,
                 RECT {

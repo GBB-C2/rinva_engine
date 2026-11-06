@@ -144,8 +144,5 @@ fn exceeding_interface_limit_rolls_back_the_whole_transition() {
     let mut player = Player::new(&p).unwrap();
     let before = state(&player);
     assert!(player.advance().is_err());
-    // Attempting to read a line may update the separate read set, but UI and history stay atomic.
-    let after = state(&player);
-    assert_eq!(after["position"], before["position"]);
-    assert_eq!(after["history"], before["history"]);
+    assert_eq!(state(&player), before);
 }

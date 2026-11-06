@@ -188,23 +188,25 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
                 .map(|l| l.text.replace(['\r', '\n'], " "))
                 .unwrap_or_else(|| app.t("Реплики").to_owned())
         };
-        ui::text(
-            dc,
-            &subtitle,
-            RECT {
-                left: a.x + margin,
-                top: a.y + header,
-                right: b.x - margin,
-                bottom: a.y + (68. * g.zoom * scale) as i32,
-            },
-            if scene.id == app.document.project.start_scene {
-                p.accent
-            } else {
-                p.muted
-            },
-            font,
-            DT_SINGLELINE | DT_END_ELLIPSIS,
-        );
+        if g.zoom >= 0.55 {
+            ui::text(
+                dc,
+                &subtitle,
+                RECT {
+                    left: a.x + margin,
+                    top: a.y + header,
+                    right: b.x - margin,
+                    bottom: a.y + (68. * g.zoom * scale) as i32,
+                },
+                if scene.id == app.document.project.start_scene {
+                    p.accent
+                } else {
+                    p.muted
+                },
+                font,
+                DT_SINGLELINE | DT_END_ELLIPSIS,
+            );
+        }
         let pin = pixel(graph::input(points[i]));
         draw_pin(dc, pin, scale, p, selected || g.hover == Hit::Input(i));
         for port in graph::ports(scene) {
@@ -217,8 +219,7 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
                 Port::Next => {
                     if scene.kind == rinva_core::NodeKind::Condition {
                         app.t("Если да")
-                    } else if scene.kind.ui_element() || scene.kind == rinva_core::NodeKind::UiClear
-                    {
+                    } else if scene.kind.interface() {
                         app.t("Далее")
                     } else if connected {
                         app.t("Переход")
@@ -238,18 +239,20 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
             if selected_port {
                 ui::rounded(dc, row, p.selected, p.selected, (4. * scale) as i32);
             }
-            ui::text(
-                dc,
-                label,
-                RECT {
-                    left: a.x + margin,
-                    right: b.x - margin,
-                    ..row
-                },
-                if connected { p.text } else { p.muted },
-                font,
-                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-            );
+            if g.zoom >= 0.55 {
+                ui::text(
+                    dc,
+                    label,
+                    RECT {
+                        left: a.x + margin,
+                        right: b.x - margin,
+                        ..row
+                    },
+                    if connected { p.text } else { p.muted },
+                    font,
+                    DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                );
+            }
             draw_pin(
                 dc,
                 pin,

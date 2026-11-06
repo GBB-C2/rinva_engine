@@ -360,5 +360,6 @@
   "Кнопка сейчас недоступна.": "This button is not currently available.",
   "У кнопки не задано действие.": "This button has no action.",
   "Повреждено состояние интерфейса.": "The saved interface state is damaged.",
-  "Введите целое число от 0 до 100.": "Enter a whole number from 0 to 100."
+  "Введите целое число от 0 до 100.": "Enter a whole number from 0 to 100.",
+  "Просмотр, %": "Preview, %"
 }
