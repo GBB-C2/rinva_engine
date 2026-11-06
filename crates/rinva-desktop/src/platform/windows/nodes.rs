@@ -188,7 +188,7 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
                 .map(|l| l.text.replace(['\r', '\n'], " "))
                 .unwrap_or_else(|| app.t("Реплики").to_owned())
         };
-        if g.zoom >= 0.55 {
+        if g.zoom >= 0.4 {
             ui::text(
                 dc,
                 &subtitle,
@@ -239,7 +239,7 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
             if selected_port {
                 ui::rounded(dc, row, p.selected, p.selected, (4. * scale) as i32);
             }
-            if g.zoom >= 0.55 {
+            if g.zoom >= 0.4 {
                 ui::text(
                     dc,
                     label,

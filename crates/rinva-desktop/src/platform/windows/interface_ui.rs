@@ -257,7 +257,14 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
 }
 pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
     let frame = crate::stage::Rect::frame(rect.right as f32, rect.bottom as f32);
-    for scene in elements(app) {
+    let elements = elements(app);
+    // Native child buttons are above all painted panels, even if a panel node
+    // executes later. Keep thumbnails in the same order as the live hierarchy.
+    for scene in elements
+        .iter()
+        .filter(|s| s.kind != NodeKind::UiButton)
+        .chain(elements.iter().filter(|s| s.kind == NodeKind::UiButton))
+    {
         let Some(ui) = &scene.ui else { continue };
         let mut r = bounds(frame, ui);
         if scene.kind == NodeKind::UiPanel {
