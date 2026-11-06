@@ -52,7 +52,7 @@ fn node_point(index: usize) -> Point {
     })
 }
 
-fn assets(root: &Path) -> Result<(), String> {
+pub(super) fn assets(root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(root.join("assets")).map_err(|e| e.to_string())?;
     // Explicit geometric fixtures, not production character artwork.
     for (name, color) in [
@@ -90,7 +90,7 @@ fn assets(root: &Path) -> Result<(), String> {
     }
     std::fs::write(root.join("assets/tone.wav"), wav).map_err(|e| e.to_string())
 }
-fn fixture() -> Project {
+pub(super) fn fixture() -> Project {
     let mut p = Project::demo();
     p.title = "На развилке · Studio".into();
     p.variables.insert("trust".into(), 0);

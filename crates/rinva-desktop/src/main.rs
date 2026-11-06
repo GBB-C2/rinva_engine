@@ -10,6 +10,10 @@ mod i18n;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod reading;
 
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod stage;
+
 #[cfg(windows)]
 #[path = "platform/windows/mod.rs"]
 mod platform;
@@ -55,7 +59,7 @@ fn main() {
     #[cfg(windows)]
     let smoke_output = args
         .first()
-        .is_some_and(|arg| arg == "--smoke-test")
+        .is_some_and(|arg| arg == "--smoke-test" || arg == "--smoke-player")
         .then(|| {
             args.get(1)
                 .map(std::path::PathBuf::from)

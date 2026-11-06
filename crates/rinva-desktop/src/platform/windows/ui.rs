@@ -68,12 +68,13 @@ impl Palette {
 pub struct Resources {
     pub font: HFONT,
     pub title: HFONT,
+    pub dialogue: HFONT,
     pub small: HFONT,
     pub field_brush: HBRUSH,
     pub surface_brush: HBRUSH,
 }
 impl Resources {
-    pub unsafe fn new(scale: f32, palette: Palette, language: Language) -> Self {
+    pub unsafe fn new(scale: f32, palette: Palette, language: Language, text_size: u8) -> Self {
         let font = |size: f32, weight: u32| {
             CreateFontW(
                 -(size * scale).round() as i32,
@@ -95,6 +96,7 @@ impl Resources {
         Self {
             font: font(14., FW_NORMAL),
             title: font(21., FW_SEMIBOLD),
+            dialogue: font([14., 17.5, 21.][text_size.min(2) as usize], FW_NORMAL),
             small: font(12., FW_NORMAL),
             field_brush: CreateSolidBrush(palette.field),
             surface_brush: CreateSolidBrush(palette.surface),
@@ -107,6 +109,7 @@ impl Drop for Resources {
             for object in [
                 self.font,
                 self.title,
+                self.dialogue,
                 self.small,
                 self.field_brush,
                 self.surface_brush,

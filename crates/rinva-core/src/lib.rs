@@ -6,6 +6,7 @@ mod document;
 mod model;
 mod player;
 pub mod recovery;
+pub mod saves;
 pub mod search;
 pub mod storage;
 mod story;

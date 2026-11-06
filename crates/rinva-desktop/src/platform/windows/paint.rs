@@ -31,6 +31,22 @@ impl Bitmap {
             .decode()
             .map_err(|e| format!("Не удалось открыть изображение: {e}"))?
             .into_rgba8();
+        Self::from_rgba(img)
+    }
+    pub unsafe fn from_png(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.is_empty() || bytes.len() > rinva_core::saves::MAX_THUMBNAIL {
+            return Err("Invalid thumbnail".into());
+        }
+        let mut reader =
+            image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(320);
+        limits.max_image_height = Some(180);
+        limits.max_alloc = Some(4 * 1024 * 1024);
+        reader.limits(limits);
+        Self::from_rgba(reader.decode().map_err(|e| e.to_string())?.into_rgba8())
+    }
+    unsafe fn from_rgba(img: image::RgbaImage) -> Result<Self, String> {
         let (width, height) = (img.width() as i32, img.height() as i32);
         let mut bytes = img.into_raw();
         for pixel in bytes.as_chunks_mut::<4>().0 {
@@ -122,20 +138,29 @@ pub struct SceneView<'a> {
     pub portrait: Option<&'a Bitmap>,
     pub sprites: &'a [SpriteImage],
     pub ended: bool,
+    pub dialog_style: u8,
+    pub show_dialog: bool,
     pub end_text: &'a str,
 }
 pub struct SpriteImage {
+    pub index: usize,
     pub image: Bitmap,
     pub name: String,
     pub placement: rinva_core::Sprite,
 }
 impl SpriteImage {
     unsafe fn draw(&self, dc: HDC, rect: RECT, speaker: &str) {
-        let p = &self.placement;
-        let h = (rect.bottom - rect.top) as f32 * p.scale as f32 / 100.;
-        let w = h * self.image.width as f32 / self.image.height as f32;
-        let x = rect.left as f32 + (rect.right - rect.left) as f32 * p.x as f32 / 100. - w / 2.;
-        let y = rect.top as f32 + (rect.bottom - rect.top) as f32 * p.y as f32 / 100. - h;
+        let r = crate::stage::bounds(
+            crate::stage::Rect {
+                x: rect.left as f32,
+                y: rect.top as f32,
+                w: (rect.right - rect.left) as f32,
+                h: (rect.bottom - rect.top) as f32,
+            },
+            &self.placement,
+            self.image.width as f32 / self.image.height as f32,
+        );
+        let (x, y, w, h) = (r.x, r.y, r.w, r.h);
         let source = CreateCompatibleDC(dc);
         if source.is_null() {
             return;
@@ -177,19 +202,20 @@ pub unsafe fn scene(
     small: HFONT,
 ) {
     ui::fill(dc, bounds, ui::rgb(0x10151e));
-    let available_w = bounds.right - bounds.left;
-    let available_h = bounds.bottom - bounds.top;
-    let w = available_w.min(available_h * 16 / 9);
-    let h = w * 9 / 16;
-    if w <= 0 || h <= 0 {
+    let frame = crate::stage::Rect::frame(
+        (bounds.right - bounds.left) as f32,
+        (bounds.bottom - bounds.top) as f32,
+    );
+    let rect = RECT {
+        left: bounds.left + frame.x as i32,
+        top: bounds.top + frame.y as i32,
+        right: bounds.left + (frame.x + frame.w) as i32,
+        bottom: bounds.top + (frame.y + frame.h) as i32,
+    };
+    let h = rect.bottom - rect.top;
+    if rect.right <= rect.left || h <= 0 {
         return;
     }
-    let rect = RECT {
-        left: bounds.left + (available_w - w) / 2,
-        top: bounds.top + (available_h - h) / 2,
-        right: bounds.left + (available_w + w) / 2,
-        bottom: bounds.top + (available_h + h) / 2,
-    };
     ui::fill(dc, rect, ui::rgb(0x223249));
     if let Some(image) = view.background {
         image.draw(dc, rect, false);
@@ -218,6 +244,24 @@ pub unsafe fn scene(
         sprite.draw(dc, rect, view.speaker);
     }
     RestoreDC(dc, state);
+    if !view.show_dialog {
+        return;
+    }
+    let panel_color = if view.dialog_style == 1 {
+        ui::rgb(0xf4f1ea)
+    } else {
+        ui::rgb(0x151b27)
+    };
+    let text_color = if view.dialog_style == 1 {
+        ui::rgb(0x242a35)
+    } else {
+        ui::rgb(0xf1f4f8)
+    };
+    let accent = if view.dialog_style == 1 {
+        ui::rgb(0x365f96)
+    } else {
+        ui::rgb(0xb5cff8)
+    };
     let margin = (20. * scale) as i32;
     let panel_h = (h * 43 / 100).max((100. * scale) as i32).min(h);
     let panel = RECT {
@@ -226,13 +270,7 @@ pub unsafe fn scene(
         right: rect.right - margin,
         bottom: rect.bottom - margin,
     };
-    ui::rounded(
-        dc,
-        panel,
-        ui::rgb(0x151b27),
-        ui::rgb(0x151b27),
-        (4. * scale) as i32,
-    );
+    ui::rounded(dc, panel, panel_color, panel_color, (4. * scale) as i32);
     ui::fill(
         dc,
         RECT {
@@ -253,7 +291,7 @@ pub unsafe fn scene(
                 right: panel.right - 12,
                 bottom: y + (22. * scale) as i32,
             },
-            ui::rgb(0xb5cff8),
+            accent,
             font,
             DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS,
         );
@@ -272,10 +310,56 @@ pub unsafe fn scene(
             right: panel.right - (16. * scale) as i32,
             bottom: panel.bottom - (8. * scale) as i32,
         },
-        ui::rgb(0xf1f4f8),
+        text_color,
         font,
         DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS,
     );
+}
+
+/// Render only the live scene, never menus or desktop pixels, into a bounded thumbnail.
+pub unsafe fn thumbnail(app: &super::App) -> Result<Vec<u8>, String> {
+    let dc = CreateCompatibleDC(null_mut());
+    if dc.is_null() {
+        return Err("Thumbnail allocation failed".into());
+    }
+    let mut info: BITMAPINFO = std::mem::zeroed();
+    info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+    info.bmiHeader.biWidth = 320;
+    info.bmiHeader.biHeight = -180;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    let mut bits = null_mut();
+    let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+    if bitmap.is_null() {
+        DeleteDC(dc);
+        return Err("Thumbnail allocation failed".into());
+    }
+    let old = SelectObject(dc, bitmap);
+    app.paint_canvas(
+        dc,
+        RECT {
+            left: 0,
+            top: 0,
+            right: 320,
+            bottom: 180,
+        },
+    );
+    GdiFlush();
+    let mut bytes = std::slice::from_raw_parts(bits as *const u8, 320 * 180 * 4).to_vec();
+    SelectObject(dc, old);
+    DeleteObject(bitmap);
+    DeleteDC(dc);
+    for pixel in bytes.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+        pixel[3] = 255;
+    }
+    let image = image::RgbaImage::from_raw(320, 180, bytes).ok_or("Invalid thumbnail size")?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    Ok(out.into_inner())
 }
 
 pub unsafe fn capture(hwnd: HWND, path: &Path) -> Result<(), String> {

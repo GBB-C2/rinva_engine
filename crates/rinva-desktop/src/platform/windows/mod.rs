@@ -1,15 +1,19 @@
 mod audio;
 mod dpi;
 mod fonts;
+mod game_ui;
 mod navigation;
 mod navigation_smoke;
 mod nodes;
 mod paint;
+mod player_stage_smoke;
 mod reader_ui;
 mod recovery;
 mod scroll;
+mod session_log;
 mod smoke_ui;
 mod splitters;
+mod stage_ui;
 mod studio;
 mod studio_smoke;
 mod ui;
@@ -209,6 +213,8 @@ struct App {
     graph_mode: bool,
     navigation: navigation::Navigation,
     studio: studio::Studio,
+    stage: stage_ui::Stage,
+    game: game_ui::Game,
     reader: crate::reading::Reader,
     audio: audio::Audio,
     left_width: i32,
@@ -236,6 +242,12 @@ struct App {
 }
 
 fn settings_dir() -> PathBuf {
+    if let Some(trace) = SMOKE_TRACE.get() {
+        return std::env::current_dir()
+            .unwrap_or_default()
+            .join(trace.parent().unwrap_or(Path::new(".")))
+            .join("profile");
+    }
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
@@ -280,7 +292,7 @@ impl App {
         let dark = settings.dark;
         let language = settings.language;
         let palette = Palette::new(dark);
-        let resources = Resources::new(scale, palette, language);
+        let resources = Resources::new(scale, palette, language, settings.reading.text_size);
         let mut controls = Controls::new(palette, scale);
         let font = resources.font;
         for &(id, label) in BUTTONS {
@@ -312,6 +324,8 @@ impl App {
         navigation::create(&mut controls, hwnd, &resources)?;
         studio::create(&mut controls, hwnd, &resources)?;
         reader_ui::create(&mut controls, hwnd, &resources)?;
+        game_ui::create(&mut controls, hwnd, &resources)?;
+        stage_ui::create(&mut controls, hwnd, &resources)?;
         let player = if player_only {
             Some(Player::new(&project)?)
         } else {
@@ -336,6 +350,8 @@ impl App {
             graph_mode: false,
             navigation: navigation::Navigation::default(),
             studio: studio::Studio::default(),
+            stage: stage_ui::Stage::default(),
+            game: game_ui::Game::default(),
             reader,
             audio: audio::Audio::new(),
             left_width: settings.left_width.clamp(180, 300),
@@ -638,6 +654,8 @@ impl App {
         navigation::layout(self, w, h);
         studio::layout(self, w, h);
         reader_ui::layout(self, w, h);
+        stage_ui::layout(self, w, h);
+        game_ui::layout(self, w, h);
         for id in [SCENES, ITEMS, GAME_CHOICES] {
             SendMessageW(
                 self.controls.get(id),
@@ -937,6 +955,7 @@ impl App {
         navigation::refresh(self);
         studio::refresh(self);
         reader_ui::refresh(self);
+        game_ui::refresh(self);
         self.layout();
     }
 
@@ -1011,7 +1030,7 @@ impl App {
                 }
             }
         }
-        for sprite in sprites.into_iter().take(16) {
+        for (index, sprite) in sprites.into_iter().take(16).enumerate() {
             if let Some(character) = self
                 .document
                 .project
@@ -1028,6 +1047,7 @@ impl App {
                         .and_then(|p| paint::Bitmap::load(&p))
                     {
                         Ok(image) => self.sprites.push(paint::SpriteImage {
+                            index,
                             image,
                             name: character.name.clone(),
                             placement: sprite,
@@ -1133,6 +1153,22 @@ impl App {
     }
 
     unsafe fn command(&mut self, id: u16, notification: u16) -> Result<(), String> {
+        stage_ui::cancel(self);
+        if game_ui::command(self, id, notification)? || stage_ui::command(self, id) {
+            return Ok(());
+        }
+        if self.game.page.is_some()
+            && [
+                ADVANCE,
+                BACK,
+                reader_ui::AUTO,
+                reader_ui::SKIP,
+                reader_ui::LOG,
+            ]
+            .contains(&id)
+        {
+            return Ok(());
+        }
         if studio::command(self, id, notification)? || reader_ui::command(self, id, notification)? {
             return Ok(());
         }
@@ -1524,13 +1560,22 @@ impl App {
                     Player::new(&self.document.project)?
                 });
                 self.reader.reset();
+                self.game.session = true;
+                self.game.page = None;
+                self.game.closing = false;
+                game_ui::mark_progress(self);
                 reader_ui::restore_read(self);
                 self.status =
-                    "Enter — далее / выбрать · Назад — предыдущая реплика · Esc — редактор".into();
+                    "Enter — далее / выбрать · Назад — предыдущая реплика · Esc — меню".into();
             }
             STOP => {
                 if !self.player_only {
                     reader_ui::remember(self);
+                    if self.game.fullscreen.is_some() {
+                        game_ui::toggle_fullscreen(self)?;
+                    }
+                    self.game.session = false;
+                    self.game.page = None;
                     self.player = None;
                     self.audio.stop();
                     self.status = "Редактор · Ctrl+S — сохранить · F5 — запустить".into();
@@ -1562,22 +1607,6 @@ impl App {
                     return self.command(ADVANCE, 0);
                 } else {
                     return Ok(());
-                }
-            }
-            GAME_SAVE => {
-                reader_ui::remember(self);
-                if let Some(player) = &self.player {
-                    let path = self.game_save_path();
-                    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-                    storage::write_json(&path, &player.save())?;
-                    self.status = "Прогресс сохранён.".into();
-                }
-            }
-            GAME_LOAD => {
-                let save = storage::read_json(&self.game_save_path())?;
-                if let Some(player) = &mut self.player {
-                    player.restore(save)?;
-                    self.status = "Прогресс восстановлен.".into();
                 }
             }
             EXPORT => {
@@ -1615,6 +1644,9 @@ impl App {
             }
             _ => {}
         }
+        if matches!(id, ADVANCE | BACK) {
+            game_ui::mark_progress(self);
+        }
         self.refresh();
         if matches!(id, PLAY | PREVIEW_SCENE | ADVANCE | BACK | GAME_LOAD) {
             if let Some(player) = &self.player {
@@ -1631,7 +1663,12 @@ impl App {
     }
 
     unsafe fn rebuild_resources(&mut self) {
-        let resources = Resources::new(self.scale, self.palette, self.language);
+        let resources = Resources::new(
+            self.scale,
+            self.palette,
+            self.language,
+            self.reader.settings.text_size,
+        );
         for &handle in self.controls.handles.values() {
             SendMessageW(
                 handle,
@@ -1649,6 +1686,9 @@ impl App {
     }
 
     unsafe fn paint_frame(&self, dc: HDC, rect: RECT) {
+        if game_ui::paint(self, dc, rect) {
+            return;
+        }
         ui::fill(dc, rect, self.palette.window);
         let px = |v: i32| (v as f32 * self.scale).round() as i32;
         ui::fill(
@@ -1768,16 +1808,22 @@ impl App {
                 background: self.background.as_ref(),
                 portrait: self.portrait.as_ref(),
                 sprites: &self.sprites,
+                dialog_style: self.reader.settings.dialog_style,
+                show_dialog: !stage_ui::active(self),
                 ended,
                 end_text: self.t("Конец истории"),
             },
             self.scale,
-            self.resources.font,
+            self.resources.dialogue,
             self.resources.small,
         );
+        stage_ui::paint(self, dc, rect);
     }
 
     unsafe fn draw_item(&self, draw: &DRAWITEMSTRUCT) {
+        if game_ui::draw_slot(self, draw) {
+            return;
+        }
         let id = draw.CtlID as u16;
         let selected = draw.itemState & ODS_SELECTED != 0;
         let disabled = draw.itemState & ODS_DISABLED != 0;
@@ -1792,7 +1838,8 @@ impl App {
             || id == reader_ui::AUTO && self.reader.auto
             || id == reader_ui::SKIP && self.reader.skip
             || id == reader_ui::LOG && self.reader.log
-            || id == studio::MINIMAP && self.graph.minimap;
+            || id == studio::MINIMAP && self.graph.minimap
+            || id == stage_ui::GUIDES && self.stage.guides;
         let primary = matches!(id, PLAY | ADVANCE);
         let mut pointer: POINT = std::mem::zeroed();
         GetCursorPos(&mut pointer);
@@ -1980,14 +2027,25 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
             });
             0
         }
+        WM_ACTIVATEAPP if w == 0 => {
+            APP.with(|s| {
+                if let Ok(mut s) = s.try_borrow_mut() {
+                    if let Some(a) = s.as_mut() {
+                        stage_ui::cancel(a);
+                    }
+                }
+            });
+            0
+        }
         WM_SIZE => {
             PostMessageW(hwnd, APP_LAYOUT, 0, 0);
             0
         }
         APP_LAYOUT => {
             APP.with(|slot| {
-                if let Ok(slot) = slot.try_borrow() {
-                    if let Some(app) = slot.as_ref() {
+                if let Ok(mut slot) = slot.try_borrow_mut() {
+                    if let Some(app) = slot.as_mut() {
+                        stage_ui::cancel(app);
                         app.layout();
                     }
                 }
@@ -1997,8 +2055,9 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         WM_GETMINMAXINFO => {
             let info = &mut *(l as *mut MINMAXINFO);
             let scale = dpi::for_window(hwnd).max(96) as f32 / 96.;
-            info.ptMinTrackSize.x = (1120. * scale) as i32;
-            info.ptMinTrackSize.y = (760. * scale) as i32;
+            let fullscreen = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_POPUP != 0;
+            info.ptMinTrackSize.x = (if fullscreen { 640. } else { 1120. } * scale) as i32;
+            info.ptMinTrackSize.y = (if fullscreen { 480. } else { 760. } * scale) as i32;
             // CI's virtual desktop is small; PrintWindow can still capture a real larger HWND.
             if SMOKE_TRACE.get().is_some() {
                 info.ptMaxTrackSize.x = (1600. * scale) as i32;
@@ -2020,6 +2079,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
             APP.with(|slot| {
                 if let Ok(mut slot) = slot.try_borrow_mut() {
                     if let Some(app) = slot.as_mut() {
+                        stage_ui::cancel(app);
                         app.scale = (w & 0xffff) as f32 / 96.;
                         app.rebuild_resources();
                         app.layout();
@@ -2128,6 +2188,7 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
         WM_TIMER => {
             APP.with(|slot|if let Ok(mut slot)=slot.try_borrow_mut(){if let Some(app)=slot.as_mut(){
             app.autosave_tick();
+            game_ui::tick(app);
             navigation::tick(app);
             app.controls.sync_scrolls();
             if let Some(result)=app.export_result.as_ref().and_then(|rx|rx.try_recv().ok()){
@@ -2147,6 +2208,10 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
                 if let Ok(mut slot) = slot.try_borrow_mut() {
                     if let Some(app) = slot.as_mut() {
                         reader_ui::remember(app);
+                        stage_ui::cancel(app);
+                        if !game_ui::prepare_close(app) {
+                            return false;
+                        }
                         if app.export_result.is_some() {
                             ui::message(
                                 hwnd,
@@ -2207,7 +2272,10 @@ unsafe extern "system" fn canvas_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
                 if slot
                     .try_borrow()
                     .ok()
-                    .and_then(|s| s.as_ref().map(|a| a.graph_mode && a.player.is_none()))
+                    .and_then(|s| {
+                        s.as_ref()
+                            .map(|a| (a.graph_mode || stage_ui::active(a)) && a.player.is_none())
+                    })
                     .unwrap_or(false)
                 {
                     (DLGC_WANTARROWS
@@ -2226,7 +2294,8 @@ unsafe extern "system" fn canvas_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
             let handled = APP.with(|slot| {
                 if let Ok(mut slot) = slot.try_borrow_mut() {
                     if let Some(app) = slot.as_mut() {
-                        return nodes::input_event(app, hwnd, msg, w, l);
+                        return stage_ui::event(app, hwnd, msg, w, l)
+                            || nodes::input_event(app, hwnd, msg, w, l);
                     }
                 }
                 false
@@ -2305,12 +2374,22 @@ unsafe fn shortcut(message: &MSG) -> bool {
             .iter()
             .any(|id| focus == app.controls.get(*id));
         let command = if app.player.is_some() {
+            if key == VK_F11 {
+                return Some((app.hwnd, game_ui::FULLSCREEN));
+            }
+            if app.game.page.is_some() {
+                return if key == VK_ESCAPE {
+                    Some((app.hwnd, game_ui::RETURN))
+                } else {
+                    None
+                };
+            }
             match key {
                 VK_ESCAPE if app.reader.log => reader_ui::LOG,
                 0x41 if !text_entry => reader_ui::AUTO,
                 0x53 if !text_entry && !ctrl => reader_ui::SKIP,
                 0x4C if !text_entry => reader_ui::LOG,
-                VK_ESCAPE if !app.player_only => STOP,
+                VK_ESCAPE => game_ui::MENU,
                 VK_F6 => GAME_SAVE,
                 VK_F9 => GAME_LOAD,
                 VK_RETURN
@@ -2395,6 +2474,7 @@ unsafe fn shortcut(message: &MSG) -> bool {
 }
 
 pub fn show_fatal(error: &str) {
+    session_log::event(error);
     unsafe {
         let language = storage::read_json::<Settings>(&settings_dir().join("settings.json"))
             .map(|s| s.language)
@@ -2409,7 +2489,10 @@ pub fn show_fatal(error: &str) {
 }
 
 pub fn run(args: Vec<OsString>) -> Result<(), String> {
-    if args.first().is_some_and(|a| a == "--smoke-test") {
+    if args
+        .first()
+        .is_some_and(|a| a == "--smoke-test" || a == "--smoke-player")
+    {
         let output = args
             .get(1)
             .map(PathBuf::from)
@@ -2417,6 +2500,7 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         std::fs::create_dir_all(&output).map_err(|e| e.to_string())?;
         let _ = SMOKE_TRACE.set(output.join("native-trace.txt"));
     }
+    session_log::initialize();
     smoke_trace("startup");
     dpi::initialize(
         SMOKE_TRACE.get().is_some() && args.iter().skip(2).any(|arg| arg == "--legacy-dpi"),
@@ -2448,7 +2532,8 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
             .file_stem()
             .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("RinvaPlayer"));
         let play = args.first().is_some_and(|arg| arg == "--play") || standalone;
-        let smoke = args.first().is_some_and(|arg| arg == "--smoke-test");
+        let smoke_player = args.first().is_some_and(|arg| arg == "--smoke-player");
+        let smoke = args.first().is_some_and(|arg| arg == "--smoke-test") || smoke_player;
         let file = if standalone {
             Some(executable.parent().unwrap().join("story.rinva"))
         } else if play {
@@ -2499,12 +2584,23 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         smoke_trace("window shown");
         UpdateWindow(hwnd);
         smoke_trace("window painted");
+        session_log::event("native window ready");
+        if play {
+            APP.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                game_ui::open(slot.as_mut().unwrap(), game_ui::Page::Home);
+            });
+        }
         if smoke {
             let output = args
                 .get(1)
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("smoke-output"));
-            let result = smoke_test(hwnd, &output);
+            let result = if smoke_player {
+                player_stage_smoke::standalone(hwnd, &output)
+            } else {
+                smoke_test(hwnd, &output)
+            };
             DestroyWindow(hwnd);
             APP.with(|slot| *slot.borrow_mut() = None);
             return result;
@@ -2530,6 +2626,7 @@ pub fn run(args: Vec<OsString>) -> Result<(), String> {
         if message.wParam != 0 {
             return Err("Непредвиденная ошибка интерфейса.".into());
         }
+        session_log::event("clean exit");
         Ok(())
     }
 }
@@ -2608,6 +2705,7 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
         let app = slot.as_mut().unwrap();
         app.autosave_at = std::time::Instant::now() - std::time::Duration::from_secs(16);
         app.autosave_tick();
+        game_ui::tick(app);
         let session = app.recovery.as_mut().ok_or("Recovery session missing")?;
         session.finish().ok_or("Timer did not start autosave")??;
         let saved = rinva_core::recovery::read(&session.path)?;
@@ -2629,6 +2727,7 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     smoke_trace("polish done");
     navigation_smoke::run(hwnd, output)?;
     studio_smoke::run(hwnd, output)?;
+    player_stage_smoke::run(hwnd, output)?;
     let original_dark = APP.with(|slot| slot.borrow().as_ref().unwrap().dark);
     if !original_dark {
         command(THEME);

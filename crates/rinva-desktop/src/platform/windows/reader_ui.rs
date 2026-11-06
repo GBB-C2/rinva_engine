@@ -48,10 +48,11 @@ pub unsafe fn layout(app: &App, w: i32, h: i32) {
         .zip(labels)
         .enumerate()
     {
-        let x = 350 + n as i32 * 176;
+        let cell = ((w - 370) / 4).max(130);
+        let x = 350 + n as i32 * cell;
         app.controls.text(LABELS[n], app.t(label));
-        place(LABELS[n], x, 80, 90, 22);
-        place(id, x + 92, 76, 74, 220);
+        place(LABELS[n], x, 80, cell - 80, 22);
+        place(id, x + cell - 74, 76, 68, 220);
     }
     place(CANVAS, 20, 116, w - 40, h - 340);
     app.controls.show(LOG_TEXT, app.reader.log);
@@ -122,8 +123,10 @@ pub unsafe fn refresh(app: &mut App) {
             app.reader.skip = false;
         }
     }
-    if let Frame::Dialogue { line, .. } = player.frame() {
-        app.reader.tick(&line.text, app.reader.started.elapsed());
+    if app.game.page.is_none() {
+        if let Frame::Dialogue { line, .. } = player.frame() {
+            app.reader.tick(&line.text, app.reader.started.elapsed());
+        }
     }
     app.controls.text(LOG_TEXT, &player.backlog());
     update_text(app);
@@ -163,7 +166,7 @@ pub unsafe fn tick(app: &mut App) {
     let Frame::Dialogue { line, .. } = player.frame() else {
         return;
     };
-    if app.reader.log {
+    if app.reader.log || app.game.page.is_some() {
         return;
     }
     let changed = app.reader.tick(&line.text, app.reader.started.elapsed());
