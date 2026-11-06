@@ -219,7 +219,7 @@ pub unsafe fn scene(
     ui::fill(dc, rect, ui::rgb(0x223249));
     if let Some(image) = view.background {
         image.draw(dc, rect, false);
-    } else {
+    } else if view.show_dialog {
         // A quiet scene slate remains useful before the author imports artwork.
         ui::text(
             dc,

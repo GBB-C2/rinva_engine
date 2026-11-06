@@ -219,18 +219,26 @@ pub unsafe fn paint(app: &App, dc: HDC, bounds: RECT) {
         }
     }
     RestoreDC(dc, state);
+    // Keep the hint readable over arbitrary artwork in either editor theme.
+    let px = |n: f32| (n * app.scale).round() as i32;
+    let hint = RECT {
+        left: px(8.),
+        top: px(8.),
+        right: bounds.right - px(8.),
+        bottom: px(32.),
+    };
+    ui::rounded(dc, hint, app.palette.surface, app.palette.border, px(4.));
     ui::text(
         dc,
         app.t("Тяните персонажа или угол · стрелки — сдвиг · Esc — отмена"),
         RECT {
-            left: 8,
-            top: 8,
-            right: bounds.right - 8,
-            bottom: (32. * app.scale) as i32,
+            left: hint.left + px(8.),
+            right: hint.right - px(8.),
+            ..hint
         },
         app.palette.text,
         app.resources.small,
-        DT_SINGLELINE | DT_END_ELLIPSIS,
+        DT_SINGLELINE | DT_END_ELLIPSIS | DT_VCENTER,
     );
 }
 pub unsafe fn event(app: &mut App, hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> bool {

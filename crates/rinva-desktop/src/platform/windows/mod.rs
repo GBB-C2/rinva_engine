@@ -370,7 +370,11 @@ impl App {
             choices_tab: false,
             player,
             player_only,
-            status: "Создайте сцену, напишите реплики и нажмите F5.".into(),
+            status: if player_only {
+                String::new()
+            } else {
+                "Создайте сцену, напишите реплики и нажмите F5.".into()
+            },
             background: None,
             portrait: None,
             sprites: vec![],
