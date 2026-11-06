@@ -9,6 +9,9 @@ license.workspace = true
 name = "rinva"
 path = "src/main.rs"
 
+[build-dependencies]
+embed-manifest = "=1.5.1"
+
 [dependencies]
 rinva-core = { path = "../rinva-core" }
 serde.workspace = true
