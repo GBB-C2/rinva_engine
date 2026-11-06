@@ -14,6 +14,8 @@ struct Position {
     music: Option<MusicState>,
     #[serde(default)]
     music_fade_ms: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ui: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +38,9 @@ pub enum Frame<'a> {
         choices: Vec<&'a Choice>,
     },
     End {
+        scene: &'a Scene,
+    },
+    Screen {
         scene: &'a Scene,
     },
 }
@@ -65,6 +70,7 @@ impl Player {
                 variables: project.variables.clone(),
                 music: None,
                 music_fade_ms: 600,
+                ui: vec![],
             },
             history: vec![],
             read: BTreeSet::new(),
@@ -82,6 +88,14 @@ impl Player {
                 .scene(&self.position.scene)
                 .ok_or("Сцена не найдена.")?;
             if enter {
+                if scene.kind == NodeKind::UiClear {
+                    self.position.ui.clear();
+                } else if scene.kind.ui_element() && !self.position.ui.contains(&scene.id) {
+                    if self.position.ui.len() >= 64 {
+                        return Err("На экране может быть не более 64 элементов интерфейса.".into());
+                    }
+                    self.position.ui.push(scene.id.clone());
+                }
                 if let Some(audio) = &scene.audio {
                     if audio.stop_music || audio.music.is_some() {
                         self.position.music_fade_ms = audio.fade_ms;
@@ -107,6 +121,9 @@ impl Player {
                         .ok_or("Настройте изменение переменной.")?
                         .apply(&mut self.position.variables)?;
                 }
+            }
+            if scene.kind == NodeKind::UiScreen {
+                return Ok(());
             }
             if scene.kind.interactive()
                 && (self.position.line < scene.lines.len()
@@ -158,6 +175,8 @@ impl Player {
             .expect("validated runtime position");
         if self.position.ended {
             Frame::End { scene }
+        } else if scene.kind == NodeKind::UiScreen {
+            Frame::Screen { scene }
         } else if let Some(line) = scene.lines.get(self.position.line) {
             Frame::Dialogue { scene, line }
         } else {
@@ -202,6 +221,10 @@ impl Player {
         if matches!(self.frame(), Frame::Dialogue { .. }) {
             self.mark_read();
             self.transition(None)?;
+        } else if let Frame::Screen { scene } = self.frame() {
+            if let Some(next) = scene.next.clone() {
+                self.transition(Some(next))?;
+            }
         }
         Ok(())
     }
@@ -215,6 +238,29 @@ impl Player {
             _ => return Err("Сейчас выбор ответа недоступен.".into()),
         };
         self.transition(Some(target))
+    }
+    /// Activate only a visible button, never an arbitrary node supplied by the view.
+    pub fn click(&mut self, id: &str) -> Result<(), String> {
+        let scene = self
+            .project
+            .scene(id)
+            .filter(|s| {
+                s.kind == NodeKind::UiButton && self.position.ui.iter().any(|active| active == id)
+            })
+            .ok_or("Кнопка сейчас недоступна.")?;
+        let target = scene
+            .ui
+            .as_ref()
+            .and_then(|ui| ui.target.clone())
+            .ok_or("У кнопки не задано действие.")?;
+        self.transition(Some(target))
+    }
+    pub fn interface(&self) -> Vec<&Scene> {
+        self.position
+            .ui
+            .iter()
+            .filter_map(|id| self.project.scene(id))
+            .collect()
     }
     pub fn back(&mut self) {
         if let Some(old) = self.history.pop() {
@@ -301,6 +347,16 @@ impl Player {
             return Err("Слишком длинная история сохранения.".into());
         }
         for pos in std::iter::once(&saved.position).chain(&saved.history) {
+            let unique: BTreeSet<_> = pos.ui.iter().collect();
+            if pos.ui.len() > 64
+                || unique.len() != pos.ui.len()
+                || pos
+                    .ui
+                    .iter()
+                    .any(|id| self.project.scene(id).is_none_or(|s| !s.kind.ui_element()))
+            {
+                return Err("Повреждено состояние интерфейса.".into());
+            }
             let scene = self
                 .project
                 .scene(&pos.scene)
@@ -326,6 +382,7 @@ impl Player {
             };
             let valid = scene.kind.interactive()
                 && (pos.line < scene.lines.len() || pos.line == scene.lines.len() && has_choices)
+                || (scene.kind == NodeKind::UiScreen && pos.line == 0)
                 || terminal;
             if !valid || pos.ended != terminal {
                 return Err("Повреждена позиция в сохранении.".into());

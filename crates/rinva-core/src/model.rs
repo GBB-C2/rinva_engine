@@ -1,4 +1,4 @@
-use crate::{Assignment, AudioCue, Character, Condition, NodeKind, Sprite};
+use crate::{Assignment, AudioCue, Character, Condition, NodeKind, Sprite, UiElement};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -45,6 +45,8 @@ pub struct Scene {
     pub assignment: Option<Assignment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioCue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<UiElement>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sprites: Vec<Sprite>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -100,6 +102,7 @@ pub enum Field {
     Logic,
     Audio,
     Characters,
+    Interface,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -239,6 +242,7 @@ impl Scene {
             otherwise: None,
             assignment: None,
             audio: None,
+            ui: None,
             sprites: vec![],
             group: String::new(),
             note: String::new(),

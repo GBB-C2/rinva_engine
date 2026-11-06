@@ -201,7 +201,7 @@ pub unsafe fn scene(
     font: HFONT,
     small: HFONT,
 ) {
-    ui::fill(dc, bounds, ui::rgb(0x10151e));
+    ui::fill(dc, bounds, ui::rgb(0x101010));
     let frame = crate::stage::Rect::frame(
         (bounds.right - bounds.left) as f32,
         (bounds.bottom - bounds.top) as f32,
@@ -216,7 +216,7 @@ pub unsafe fn scene(
     if rect.right <= rect.left || h <= 0 {
         return;
     }
-    ui::fill(dc, rect, ui::rgb(0x223249));
+    ui::fill(dc, rect, ui::rgb(0x282828));
     if let Some(image) = view.background {
         image.draw(dc, rect, false);
     } else if view.show_dialog {
@@ -230,7 +230,7 @@ pub unsafe fn scene(
                 right: rect.right - 24,
                 bottom: rect.top + 60,
             },
-            ui::rgb(0xadc0d7),
+            ui::rgb(0xbdbdbd),
             small,
             DT_LEFT | DT_END_ELLIPSIS | DT_SINGLELINE,
         );
@@ -248,19 +248,19 @@ pub unsafe fn scene(
         return;
     }
     let panel_color = if view.dialog_style == 1 {
-        ui::rgb(0xf4f1ea)
+        ui::rgb(0xf4f4f4)
     } else {
-        ui::rgb(0x151b27)
+        ui::rgb(0x181818)
     };
     let text_color = if view.dialog_style == 1 {
-        ui::rgb(0x242a35)
+        ui::rgb(0x242424)
     } else {
-        ui::rgb(0xf1f4f8)
+        ui::rgb(0xf1f1f1)
     };
     let accent = if view.dialog_style == 1 {
-        ui::rgb(0x365f96)
+        ui::rgb(0x444444)
     } else {
-        ui::rgb(0xb5cff8)
+        ui::rgb(0xd7d7d7)
     };
     let margin = (20. * scale) as i32;
     let panel_h = (h * 43 / 100).max((100. * scale) as i32).min(h);
@@ -277,7 +277,7 @@ pub unsafe fn scene(
             right: panel.left + (3. * scale) as i32,
             ..panel
         },
-        ui::rgb(0x9cbef8),
+        ui::rgb(0xe0e0e0),
     );
     let x = panel.left + (16. * scale) as i32;
     let y = panel.top + (10. * scale) as i32;

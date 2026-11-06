@@ -213,9 +213,13 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
             let selected_port = g.selected_port == Some((i, port));
             let label = match port {
                 Port::Otherwise => app.t("Если нет"),
+                Port::Click => app.t("Нажатие"),
                 Port::Next => {
                     if scene.kind == rinva_core::NodeKind::Condition {
                         app.t("Если да")
+                    } else if scene.kind.ui_element() || scene.kind == rinva_core::NodeKind::UiClear
+                    {
+                        app.t("Далее")
                     } else if connected {
                         app.t("Переход")
                     } else {
@@ -253,7 +257,7 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
                 p,
                 selected_port || g.hover == Hit::Output(i, port),
             );
-            if !connected && matches!(port, Port::Choice(_)) {
+            if !connected && matches!(port, Port::Choice(_) | Port::Click) {
                 let pen = CreatePen(PS_SOLID, 1, p.muted);
                 let old = SelectObject(dc, pen);
                 MoveToEx(dc, pin.x - 2, pin.y - 2, null_mut());
@@ -262,7 +266,7 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
                 DeleteObject(pen);
             }
         }
-        if selected && GetFocus() == app.controls.get(CANVAS) {
+        if selected && GetFocus() == app.controls.get(GRAPH_CANVAS) {
             let mut focus = r;
             InflateRect(&mut focus, -3, -3);
             DrawFocusRect(dc, &focus);

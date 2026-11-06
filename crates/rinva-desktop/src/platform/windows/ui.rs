@@ -42,13 +42,13 @@ impl Palette {
     pub fn new(dark: bool) -> Self {
         let c = if dark {
             [
-                0x171b22, 0x202630, 0x2b323e, 0x3c4655, 0xf1f4f8, 0xaeb9c9, 0x9cbef8, 0x14233d,
-                0x354765,
+                0x181818, 0x222222, 0x2c2c2c, 0x454545, 0xededed, 0xb1b1b1, 0xe0e0e0, 0x1b1b1b,
+                0x414141,
             ]
         } else {
             [
-                0xf0f2f6, 0xffffff, 0xe9edf4, 0xcbd3df, 0x202b3b, 0x58677b, 0x315fc4, 0xffffff,
-                0xdce8fc,
+                0xf1f1f1, 0xffffff, 0xe8e8e8, 0xc8c8c8, 0x242424, 0x646464, 0x444444, 0xffffff,
+                0xd7d7d7,
             ]
         };
         Self {
@@ -149,6 +149,9 @@ impl Controls {
         style: u32,
         font: HFONT,
     ) -> Result<(), String> {
+        if self.handles.contains_key(&id) {
+            return Err(format!("Duplicate native control identifier: {id}"));
+        }
         let handle = CreateWindowExW(
             0,
             wide(class).as_ptr(),
@@ -284,9 +287,25 @@ impl Controls {
             id,
             "COMBOBOX",
             "",
-            WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST as u32,
+            WS_TABSTOP
+                | WS_VSCROLL
+                | (CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32,
             font,
-        )
+        )?;
+        SetWindowTheme(self.get(id), wide("").as_ptr(), wide("").as_ptr());
+        SendMessageW(
+            self.get(id),
+            CB_SETITEMHEIGHT,
+            usize::MAX,
+            (24. * self.scale) as isize,
+        );
+        SendMessageW(
+            self.get(id),
+            CB_SETITEMHEIGHT,
+            0,
+            (28. * self.scale) as isize,
+        );
+        Ok(())
     }
     pub unsafe fn place(&self, id: u16, x: i32, y: i32, w: i32, h: i32, scale: f32) {
         let px = |v: i32| (v as f32 * scale).round() as i32;
@@ -409,6 +428,10 @@ impl Controls {
         self.palette = palette;
         self.scale = scale;
         for &handle in self.handles.values() {
+            if is_class(handle, "COMBOBOX") {
+                SendMessageW(handle, CB_SETITEMHEIGHT, usize::MAX, (24. * scale) as isize);
+                SendMessageW(handle, CB_SETITEMHEIGHT, 0, (28. * scale) as isize);
+            }
             let mut data = 0;
             if GetWindowSubclass(handle, Some(field_proc), 2, &mut data) != 0 {
                 let s = &mut *(data as *mut FieldStyle);

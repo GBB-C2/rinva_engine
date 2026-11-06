@@ -1,0 +1,270 @@
+{
+  "format_version": 1,
+  "id": "rinva-node-interface-demo",
+  "title": "Платформа 04 · Нодовый интерфейс",
+  "start_scene": "clear-menu",
+  "variables": {
+    "coins": 0
+  },
+  "scenes": [
+    {
+      "id": "clear-menu",
+      "name": "01 · Собрать меню",
+      "kind": "ui_clear",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "panel",
+      "node_position": {
+        "x": 32,
+        "y": 32
+      }
+    },
+    {
+      "id": "panel",
+      "name": "02 · Панель меню",
+      "kind": "ui_panel",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "heading",
+      "ui": {
+        "x": 8,
+        "y": 8,
+        "width": 84,
+        "height": 84,
+        "text": ""
+      },
+      "node_position": {
+        "x": 316,
+        "y": 32
+      }
+    },
+    {
+      "id": "heading",
+      "name": "03 · Заголовок",
+      "kind": "ui_text",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "balance",
+      "ui": {
+        "x": 16,
+        "y": 18,
+        "width": 68,
+        "height": 14,
+        "text": "ПЛАТФОРМА 04"
+      },
+      "node_position": {
+        "x": 600,
+        "y": 32
+      }
+    },
+    {
+      "id": "balance",
+      "name": "04 · Счётчик",
+      "kind": "ui_text",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "start",
+      "ui": {
+        "x": 16,
+        "y": 36,
+        "width": 68,
+        "height": 16,
+        "text": "До отправления — один выбор. Монеты: {coins}"
+      },
+      "node_position": {
+        "x": 884,
+        "y": 32
+      }
+    },
+    {
+      "id": "start",
+      "name": "05 · Начать историю",
+      "kind": "ui_button",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "earn",
+      "ui": {
+        "x": 16,
+        "y": 62,
+        "width": 32,
+        "height": 13,
+        "text": "Начать историю",
+        "target": "clear-story"
+      },
+      "node_position": {
+        "x": 32,
+        "y": 206
+      }
+    },
+    {
+      "id": "earn",
+      "name": "06 · Получить монету",
+      "kind": "ui_button",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "screen",
+      "ui": {
+        "x": 52,
+        "y": 62,
+        "width": 32,
+        "height": 13,
+        "text": "+1 монета",
+        "target": "coin"
+      },
+      "node_position": {
+        "x": 316,
+        "y": 206
+      }
+    },
+    {
+      "id": "screen",
+      "name": "07 · Ждать нажатия",
+      "kind": "ui_screen",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": null,
+      "node_position": {
+        "x": 600,
+        "y": 206
+      }
+    },
+    {
+      "id": "coin",
+      "name": "08 · Монеты +1",
+      "kind": "set_variable",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "clear-menu",
+      "assignment": {
+        "variable": "coins",
+        "operation": "add",
+        "value": 1
+      },
+      "node_position": {
+        "x": 884,
+        "y": 206
+      }
+    },
+    {
+      "id": "clear-story",
+      "name": "09 · Убрать меню",
+      "kind": "ui_clear",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "dialogue",
+      "node_position": {
+        "x": 32,
+        "y": 380
+      }
+    },
+    {
+      "id": "dialogue",
+      "name": "10 · Разговор с Мирой",
+      "kind": "dialogue",
+      "background": null,
+      "portrait": null,
+      "lines": [
+        {
+          "speaker": "Мира",
+          "text": "Поезд отправляется через минуту. У тебя есть монета на билет?"
+        }
+      ],
+      "choices": [],
+      "next": "check",
+      "node_position": {
+        "x": 316,
+        "y": 380
+      }
+    },
+    {
+      "id": "check",
+      "name": "11 · Хватит на билет?",
+      "kind": "condition",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": "ticket",
+      "condition": {
+        "variable": "coins",
+        "comparison": "at_least",
+        "value": 1
+      },
+      "otherwise": "walk",
+      "node_position": {
+        "x": 600,
+        "y": 380
+      }
+    },
+    {
+      "id": "ticket",
+      "name": "12 · Едем вместе",
+      "kind": "dialogue",
+      "background": null,
+      "portrait": null,
+      "lines": [
+        {
+          "speaker": "Мира",
+          "text": "Отлично! Встречаем рассвет в дороге."
+        }
+      ],
+      "choices": [],
+      "next": "end",
+      "node_position": {
+        "x": 884,
+        "y": 380
+      }
+    },
+    {
+      "id": "walk",
+      "name": "13 · Другая дорога",
+      "kind": "dialogue",
+      "background": null,
+      "portrait": null,
+      "lines": [
+        {
+          "speaker": "Мира",
+          "text": "Тогда пойдём пешком. У каждой истории есть другая дорога."
+        }
+      ],
+      "choices": [],
+      "next": "end",
+      "node_position": {
+        "x": 32,
+        "y": 554
+      }
+    },
+    {
+      "id": "end",
+      "name": "14 · Конец",
+      "kind": "end",
+      "background": null,
+      "portrait": null,
+      "lines": [],
+      "choices": [],
+      "next": null,
+      "node_position": {
+        "x": 316,
+        "y": 554
+      }
+    }
+  ]
+}

@@ -55,13 +55,18 @@ pub const NEW_NODE: u16 = 2071;
 pub const MINIMAP: u16 = 2072;
 const LABEL_BASE: u16 = 5000;
 const LABEL_COUNT: u16 = 14;
-pub const KINDS: [NodeKind; 6] = [
+pub const KINDS: [NodeKind; 11] = [
     NodeKind::Dialogue,
     NodeKind::Choice,
     NodeKind::Condition,
     NodeKind::SetVariable,
     NodeKind::Music,
     NodeKind::End,
+    NodeKind::UiPanel,
+    NodeKind::UiText,
+    NodeKind::UiButton,
+    NodeKind::UiClear,
+    NodeKind::UiScreen,
 ];
 pub fn kind_name(kind: NodeKind) -> &'static str {
     match kind {
@@ -71,6 +76,11 @@ pub fn kind_name(kind: NodeKind) -> &'static str {
         NodeKind::SetVariable => "Переменная",
         NodeKind::Music => "Музыка",
         NodeKind::End => "Конец",
+        NodeKind::UiPanel => "UI · Панель",
+        NodeKind::UiText => "UI · Текст",
+        NodeKind::UiButton => "UI · Кнопка",
+        NodeKind::UiClear => "UI · Очистить",
+        NodeKind::UiScreen => "UI · Экран",
     }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -81,13 +91,15 @@ pub enum Pane {
     Audio,
     Characters,
     Notes,
+    Interface,
 }
-pub const PANES: [Pane; 5] = [
+pub const PANES: [Pane; 6] = [
     Pane::Text,
     Pane::Logic,
     Pane::Audio,
     Pane::Characters,
     Pane::Notes,
+    Pane::Interface,
 ];
 #[derive(Default)]
 pub struct Studio {
@@ -97,6 +109,7 @@ pub struct Studio {
     pub sprite: usize,
     pub variable: usize,
     pub new_kind: usize,
+    inspected: String,
 }
 const BUTTONS: &[(u16, &str)] = &[
     (APPLY_RULE, "Применить правило"),
@@ -202,11 +215,18 @@ pub unsafe fn layout(app: &App, w: i32, h: i32) {
     app.controls.show(LABEL_SCENE, false);
     place(SCENE_NAME, x, 140, iw, 32);
     if app.graph_mode && app.navigation.mode.is_none() {
-        place(NEW_KIND, center + 140, 120, (cw - 246).clamp(120, 200), 240);
+        let toolbar_y = 132 + app.preview_height(h);
+        place(
+            NEW_KIND,
+            center + 140,
+            toolbar_y,
+            (cw - 246).clamp(120, 200),
+            360,
+        );
         place(
             NEW_NODE,
             center + 148 + (cw - 246).clamp(120, 200),
-            120,
+            toolbar_y,
             90,
             28,
         );
@@ -350,7 +370,7 @@ pub unsafe fn layout(app: &App, w: i32, h: i32) {
             place(RIGHT_WIDTH, x + (iw + 8) / 2, h - 166, (iw - 8) / 2, 220);
             place(RESET_LAYOUT, x, h - 112, iw, 32);
         }
-        Pane::Text => {}
+        Pane::Text | Pane::Interface => {}
     }
 }
 unsafe fn fill(app: &App, id: u16, values: &[&str], selected: usize) {
@@ -365,6 +385,14 @@ unsafe fn fill(app: &App, id: u16, values: &[&str], selected: usize) {
     );
 }
 pub unsafe fn refresh(app: &mut App) {
+    if app.studio.inspected != app.scene().id {
+        app.studio.inspected = app.scene().id.clone();
+        if app.scene().kind.interface() {
+            app.studio.pane = Pane::Interface;
+        } else if app.studio.pane == Pane::Interface {
+            app.studio.pane = Pane::Text;
+        }
+    }
     for &(id, label) in BUTTONS {
         app.controls.text(id, app.t(label));
     }
@@ -377,6 +405,7 @@ pub unsafe fn refresh(app: &mut App) {
             "Звук",
             "Персонажи",
             "Группы и заметки",
+            "Интерфейс",
         ],
         PANES
             .iter()
@@ -674,10 +703,18 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
     let item = app.selected_item;
     match id {
         INSPECTOR => {
-            app.studio.pane = PANES[app.controls.selection(id, true).unwrap_or(0).min(4)];
+            app.studio.pane = PANES[app
+                .controls
+                .selection(id, true)
+                .unwrap_or(0)
+                .min(PANES.len() - 1)];
         }
         NEW_KIND => {
-            app.studio.new_kind = app.controls.selection(id, true).unwrap_or(0).min(5);
+            app.studio.new_kind = app
+                .controls
+                .selection(id, true)
+                .unwrap_or(0)
+                .min(KINDS.len() - 1);
         }
         NEW_NODE => {
             let kind = KINDS[app.studio.new_kind];
@@ -686,6 +723,9 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
             app.document.change(|p| {
                 let mut s = rinva_core::Scene::new(p.next_scene_id(), name);
                 s.kind = kind;
+                if kind.ui_element() {
+                    s.ui = Some(Default::default());
+                }
                 s.lines[0].text = text;
                 if kind != NodeKind::Dialogue {
                     s.lines.clear();
@@ -701,7 +741,9 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
             app.selected_scene = app.document.project.scenes.len() - 1;
             app.selected_item = 0;
             app.graph.selection.clear();
-            app.studio.pane = if kind == NodeKind::Music {
+            app.studio.pane = if kind.interface() {
+                Pane::Interface
+            } else if kind == NodeKind::Music {
                 Pane::Audio
             } else if kind.interactive() {
                 Pane::Text
@@ -711,8 +753,20 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
             app.choices_tab = kind == NodeKind::Choice;
         }
         KIND => {
-            let kind = KINDS[app.controls.selection(id, true).unwrap_or(0).min(5)];
-            app.document.change(|p| p.scenes[i].kind = kind);
+            let kind = KINDS[app
+                .controls
+                .selection(id, true)
+                .unwrap_or(0)
+                .min(KINDS.len() - 1)];
+            app.document.change(|p| {
+                p.scenes[i].kind = kind;
+                if kind.ui_element() {
+                    p.scenes[i].ui.get_or_insert_with(Default::default);
+                }
+            });
+            if kind.interface() {
+                app.studio.pane = Pane::Interface;
+            }
         }
         RULE_VAR | RULE_OP | MUSIC_MODE => {
             return Ok(true);

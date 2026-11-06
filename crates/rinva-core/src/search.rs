@@ -72,6 +72,13 @@ pub fn search(project: &Project, query: &str, scope: SearchScope, limit: usize) 
     }
     for scene in &project.scenes {
         let id = Some(scene.id.as_str());
+        if scope == SearchScope::All {
+            if let Some(ui) = &scene.ui {
+                if !visit(id, Field::Interface, &ui.text) {
+                    return result;
+                }
+            }
+        }
         if matches!(scope, SearchScope::All | SearchScope::Scenes)
             && !visit(id, Field::SceneName, &scene.name)
         {
@@ -115,6 +122,7 @@ pub fn field_text<'a>(
     Some(match field {
         Field::Scene => &scene.id,
         Field::SceneName => &scene.name,
+        Field::Interface => scene.ui.as_ref().map(|ui| ui.text.as_str()).unwrap_or(""),
         Field::Speaker(i) => &scene.lines.get(i)?.speaker,
         Field::Dialogue(i) => &scene.lines.get(i)?.text,
         Field::ChoiceText(i) => &scene.choices.get(i)?.text,

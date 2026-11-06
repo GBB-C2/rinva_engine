@@ -54,7 +54,17 @@ pub unsafe fn layout(app: &App, w: i32, h: i32) {
         place(LABELS[n], x, 80, cell - 80, 22);
         place(id, x + cell - 74, 76, 68, 220);
     }
-    place(CANVAS, 20, 116, w - 40, h - 340);
+    let screen = matches!(
+        app.player.as_ref().map(|p| p.frame()),
+        Some(Frame::Screen { .. })
+    );
+    if screen {
+        app.controls.show(TRANSCRIPT, false);
+        app.controls.show(GAME_CHOICES, false);
+        app.controls.show(AUTO, false);
+        app.controls.show(SKIP, false);
+    }
+    place(CANVAS, 20, 116, w - 40, h - if screen { 196 } else { 340 });
     app.controls.show(LOG_TEXT, app.reader.log);
     if app.reader.log {
         app.controls.show(CANVAS, false);

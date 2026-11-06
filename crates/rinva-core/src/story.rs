@@ -12,6 +12,11 @@ pub enum NodeKind {
     SetVariable,
     Music,
     End,
+    UiPanel,
+    UiText,
+    UiButton,
+    UiClear,
+    UiScreen,
 }
 impl NodeKind {
     pub fn is_default(&self) -> bool {
@@ -19,6 +24,39 @@ impl NodeKind {
     }
     pub fn interactive(self) -> bool {
         matches!(self, Self::Dialogue | Self::Choice)
+    }
+    pub fn ui_element(self) -> bool {
+        matches!(self, Self::UiPanel | Self::UiText | Self::UiButton)
+    }
+    pub fn interface(self) -> bool {
+        self.ui_element() || matches!(self, Self::UiClear | Self::UiScreen)
+    }
+}
+
+/// A screen-space rectangle in percentages of the scene, independent of DPI.
+/// Buttons continue construction through `Scene::next`; `target` runs only on click.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiElement {
+    pub x: u8,
+    pub y: u8,
+    pub width: u8,
+    pub height: u8,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+impl Default for UiElement {
+    fn default() -> Self {
+        Self {
+            x: 30,
+            y: 40,
+            width: 40,
+            height: 12,
+            text: "…".into(),
+            target: None,
+        }
     }
 }
 
@@ -162,5 +200,26 @@ impl Sprite {
             scale: 100,
             layer: 0,
         }
+    }
+}
+
+impl UiElement {
+    /// Substitute known variable tokens once; retain unknown braces as literal author text.
+    pub fn render_text(&self, variables: &BTreeMap<String, i64>) -> String {
+        let mut result = String::new();
+        let mut rest = self.text.as_str();
+        while let Some(open) = rest.find('{') {
+            result.push_str(&rest[..open]);
+            rest = &rest[open..];
+            let Some(close) = rest.find('}') else { break };
+            if let Some(value) = variables.get(&rest[1..close]) {
+                result.push_str(&value.to_string());
+            } else {
+                result.push_str(&rest[..=close]);
+            }
+            rest = &rest[close + 1..];
+        }
+        result.push_str(rest);
+        result
     }
 }

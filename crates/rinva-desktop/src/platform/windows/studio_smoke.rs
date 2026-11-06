@@ -258,8 +258,8 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     modified[VK_CONTROL as usize] |= 0x80;
     SetKeyboardState(modified.as_ptr());
     for index in [0, 4] {
-        pointer(CANVAS, WM_LBUTTONDOWN, node_point(index));
-        pointer(CANVAS, WM_LBUTTONUP, node_point(index));
+        pointer(GRAPH_CANVAS, WM_LBUTTONDOWN, node_point(index));
+        pointer(GRAPH_CANVAS, WM_LBUTTONUP, node_point(index));
     }
     SetKeyboardState(keys.as_ptr());
     check(
@@ -269,10 +269,10 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     let before = project();
     let start = node_point(0);
     let finish = Point::new(start.x + 28., start.y + 20.);
-    pointer(CANVAS, WM_LBUTTONDOWN, start);
-    pointer(CANVAS, WM_MOUSEMOVE, finish);
+    pointer(GRAPH_CANVAS, WM_LBUTTONDOWN, start);
+    pointer(GRAPH_CANVAS, WM_MOUSEMOVE, finish);
     check(project() == before, "Group preview mutated the document")?;
-    pointer(CANVAS, WM_LBUTTONUP, finish);
+    pointer(GRAPH_CANVAS, WM_LBUTTONUP, finish);
     let after = project();
     let before_positions = graph::positions(&before);
     let after_positions = graph::positions(&after);
@@ -312,11 +312,15 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     let old_pan = APP.with(|s| s.borrow().as_ref().unwrap().graph.pan);
     let size = APP.with(|s| s.borrow().as_ref().unwrap().canvas_size());
     pointer(
-        CANVAS,
+        GRAPH_CANVAS,
         WM_LBUTTONDOWN,
         Point::new(size.x - 40., size.y - 40.),
     );
-    pointer(CANVAS, WM_LBUTTONUP, Point::new(size.x - 40., size.y - 40.));
+    pointer(
+        GRAPH_CANVAS,
+        WM_LBUTTONUP,
+        Point::new(size.x - 40., size.y - 40.),
+    );
     check(
         APP.with(|s| s.borrow().as_ref().unwrap().graph.pan) != old_pan && project() == before,
         "Minimap did not navigate without editing the story",

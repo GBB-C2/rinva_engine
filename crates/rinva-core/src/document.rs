@@ -95,6 +95,7 @@ impl Document {
             other.id != scene.id
                 && (other.next.as_ref() == Some(&scene.id)
                     || other.otherwise.as_ref() == Some(&scene.id)
+                    || other.ui.as_ref().and_then(|ui| ui.target.as_ref()) == Some(&scene.id)
                     || other.choices.iter().any(|c| c.target == scene.id))
         }) {
             return Err("На эту сцену ведут переходы. Сначала измените их назначения.".into());

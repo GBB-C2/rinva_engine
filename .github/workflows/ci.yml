@@ -28,6 +28,7 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo run --locked -p rinva-desktop -- --validate examples/first-light.rinva
       - run: cargo run --locked -p rinva-desktop -- --validate examples/trust.rinva
+      - run: cargo run --locked -p rinva-desktop -- --validate examples/node-ui.rinva
 
   windows:
     name: windows-${{ matrix.abi }}
@@ -84,6 +85,7 @@ jobs:
           if ($process.ExitCode -ne 0) { Get-Content smoke-debug-output/native-error.txt -ErrorAction SilentlyContinue; throw "Debug smoke failed: $($process.ExitCode)" }
           Get-Content smoke-debug-output/native-smoke.txt
           Get-Content smoke-debug-output/player-stage.txt
+          Get-Content smoke-debug-output/node-interface.txt
           if (-not (Select-String -Path smoke-debug-output/native-trace.txt -Pattern 'DPI: monitor fallback' -Quiet)) { throw 'DPI fallback was not exercised' }
           if (Select-String -Path smoke-debug-output/native-trace.txt -Pattern 'RUNAWAY' -Quiet) { throw 'Debug message loop did not settle' }
       - name: Native smoke test
@@ -98,6 +100,7 @@ jobs:
           if ($process.ExitCode -ne 0) { Get-Content smoke-output/native-error.txt -ErrorAction SilentlyContinue; throw "Native smoke failed: $($process.ExitCode)" }
           Get-Content smoke-output/native-smoke.txt
           Get-Content smoke-output/player-stage.txt
+          Get-Content smoke-output/node-interface.txt
           if (Select-String -Path smoke-output/native-trace.txt -Pattern 'RUNAWAY' -Quiet) { throw 'Native message loop did not settle' }
       - name: Exported player startup
         shell: pwsh

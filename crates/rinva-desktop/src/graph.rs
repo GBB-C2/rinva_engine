@@ -32,6 +32,7 @@ pub enum Port {
     Next,
     Choice(usize),
     Otherwise,
+    Click,
 }
 
 pub fn ports(scene: &Scene) -> Vec<Port> {
@@ -39,6 +40,8 @@ pub fn ports(scene: &Scene) -> Vec<Port> {
         vec![]
     } else if scene.kind == NodeKind::Condition {
         vec![Port::Next, Port::Otherwise]
+    } else if scene.kind == NodeKind::UiButton {
+        vec![Port::Next, Port::Click]
     } else if !scene.kind.interactive() || scene.choices.is_empty() {
         vec![Port::Next]
     } else {
@@ -49,6 +52,7 @@ pub fn target(scene: &Scene, port: Port) -> Option<&str> {
     match port {
         Port::Next => scene.next.as_deref(),
         Port::Otherwise => scene.otherwise.as_deref(),
+        Port::Click => scene.ui.as_ref().and_then(|ui| ui.target.as_deref()),
         Port::Choice(i) => scene
             .choices
             .get(i)
@@ -66,7 +70,7 @@ pub fn output(p: Point, port: Port) -> Point {
             + PORT_STEP
                 * match port {
                     Port::Next => 0,
-                    Port::Otherwise => 1,
+                    Port::Otherwise | Port::Click => 1,
                     Port::Choice(i) => i,
                 } as f32
             + PORT_STEP / 2.,
@@ -154,6 +158,12 @@ pub fn connect(
         match port {
             Port::Next => p.scenes[source].next = destination,
             Port::Otherwise => p.scenes[source].otherwise = destination,
+            Port::Click => {
+                p.scenes[source]
+                    .ui
+                    .get_or_insert_with(Default::default)
+                    .target = destination
+            }
             Port::Choice(i) => p.scenes[source].choices[i].target = destination.unwrap_or_default(),
         }
     });
@@ -507,5 +517,26 @@ mod tests {
         g.zoom_at(1.4, pin);
         let after = g.world(pin);
         assert!((before.x - after.x).abs() < 0.001 && (before.y - after.y).abs() < 0.001);
+    }
+}
+
+#[cfg(test)]
+mod interface_tests {
+    use super::*;
+    #[test]
+    fn button_event_links_are_separate_from_construction_and_undo() {
+        let project: Project =
+            serde_json::from_str(include_str!("../../../examples/node-ui.rinva")).unwrap();
+        let mut doc = Document::new(project.clone());
+        assert_eq!(ports(&project.scenes[4]), vec![Port::Next, Port::Click]);
+        connect(&mut doc, 4, Port::Click, Some(7)).unwrap();
+        assert_eq!(target(&doc.project.scenes[4], Port::Next), Some("earn"));
+        assert_eq!(target(&doc.project.scenes[4], Port::Click), Some("coin"));
+        doc.undo();
+        assert_eq!(doc.project, project);
+        connect(&mut doc, 4, Port::Click, None).unwrap();
+        assert!(doc.project.check().is_err());
+        doc.undo();
+        assert_eq!(doc.project, project);
     }
 }
