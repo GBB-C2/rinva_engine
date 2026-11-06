@@ -8,6 +8,10 @@
 
 Настоящие снимки Win32-приложения из автоматизированного запуска на Windows. В демонстрации фон ещё не импортирован; свои изображения можно добавить кнопкой «Выбрать фон».
 
+![Постановка сцены: перемещение, масштаб, сетка и слои](docs/screenshots/stage-drag-ru.png)
+
+[Меню самостоятельной игры](docs/screenshots/standalone-title.png) · [Слоты с миниатюрами](docs/screenshots/player-slots-ru.png) · [Настройки на японском](docs/screenshots/player-settings-ja-light.png) · [Светлый диалог, текст 150%](docs/screenshots/player-dialogue-light.png)
+
 ![Условия, переменные, группы и миникарта Rinva](docs/screenshots/studio-nodes-ru.png)
 
 [Ноды в светлой теме](docs/screenshots/nodes-light.png) · [Редактор реплик](docs/screenshots/editor-dark.png) · [Полосы прокрутки](docs/screenshots/scrollbars.png) · [Проигрыватель](docs/screenshots/player.png)
@@ -59,7 +63,7 @@
 
 ## Сборка из исходников
 
-Установите [Rust](https://rust-lang.org/tools/install/) и Visual Studio Build Tools с компонентом **Desktop development with C++**. Используйте актуальный стабильный Rust и зафиксированный `Cargo.lock`.
+Для MSVC установите [Rust](https://rust-lang.org/tools/install/) и Visual Studio Build Tools с компонентом **Desktop development with C++**. Также поддерживается Rust GNU/MinGW x64 с GNU-линковщиком. Используйте актуальный стабильный Rust и зафиксированный `Cargo.lock`; манифест Common Controls v6 встраивается для обоих вариантов автоматически.
 
 ```powershell
 cargo run --locked -p rinva-desktop
@@ -81,9 +85,9 @@ rinva.exe --play examples/first-light.rinva
 cargo run --locked -p rinva-desktop -- --validate examples/first-light.rinva
 ```
 
-CI собирает Windows-приложение и сохраняет его в артефакте `rinva-windows-x64`. Артефакт `native-smoke` содержит результаты автоматизированного запуска и снимки интерфейса.
+CI проверяет Windows-приложение отдельно для MSVC и GNU/MinGW. Готовые сборки: `rinva-windows-x64` и `rinva-windows-x64-gnu`. Артефакты `native-smoke` и `native-smoke-gnu` содержат результаты автоматизированного запуска и снимки соответствующего варианта.
 
-Если компиляция успешна, но процесс завершается с `0xc0000139` / `STATUS_ENTRYPOINT_NOT_FOUND`, см. [диагностику запуска](docs/STARTUP.md). Современные DPI-функции определяются по наличию; обе MSVC-сборки, `debug` и `release`, проверяются на запуск и наличие встроенного манифеста.
+Если компиляция успешна, но процесс завершается с `0xc0000139` / `STATUS_ENTRYPOINT_NOT_FOUND`, см. [диагностику запуска](docs/STARTUP.md), включая отдельный разбор `GetWindowSubclass`. Современные DPI-функции определяются по наличию; `debug` и `release` обоих вариантов проверяются на запуск и наличие встроенного манифеста.
 
 ## Нодовый редактор
 

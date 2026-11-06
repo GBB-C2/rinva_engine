@@ -30,13 +30,37 @@ jobs:
       - run: cargo run --locked -p rinva-desktop -- --validate examples/trust.rinva
 
   windows:
+    name: windows-${{ matrix.abi }}
     runs-on: windows-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: msvc
+            toolchain: stable-x86_64-pc-windows-msvc
+            smoke_artifact: native-smoke
+            package_artifact: rinva-windows-x64
+          - abi: gnu
+            toolchain: stable-x86_64-pc-windows-gnu
+            smoke_artifact: native-smoke-gnu
+            package_artifact: rinva-windows-x64-gnu
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ matrix.toolchain }}
           components: clippy
+      - name: Record compiler and GNU linker
+        shell: pwsh
+        run: |
+          rustc -vV
+          if ('${{ matrix.abi }}' -eq 'gnu') {
+            $compiler = Get-Command gcc.exe -ErrorAction Stop
+            Write-Output "GNU linker: $($compiler.Source)"
+            $triple = & $compiler.Source -dumpmachine
+            if ($LASTEXITCODE -ne 0 -or $triple -ne 'x86_64-w64-mingw32') { throw "Unexpected GNU linker: $triple" }
+          }
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo build --locked --release -p rinva-desktop
@@ -94,7 +118,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-smoke
+          name: ${{ matrix.smoke_artifact }}
           path: |
             smoke-output
             smoke-debug-output
@@ -104,5 +128,5 @@ jobs:
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
-          name: rinva-windows-x64
+          name: ${{ matrix.package_artifact }}
           path: dist/Rinva

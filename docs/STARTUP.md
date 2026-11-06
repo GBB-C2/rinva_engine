@@ -2,6 +2,16 @@
 
 `0xc0000139` / `STATUS_ENTRYPOINT_NOT_FOUND` означает, что загрузчик Windows не нашёл импортируемую функцию в DLL. Это происходит до входа в `main`, поэтому отсутствие Rust panic или файла `native-error.txt` при такой ошибке ожидаемо. Повторная компиляция без изменения причины не помогает. Сам код ошибки не сообщает имя отсутствующей функции.
 
+## В окне ошибки указано GetWindowSubclass
+
+`GetWindowSubclass` требует Common Controls v6, выбранной манифестом приложения. Windows может загрузить старую версию Common Controls, если зависимость v6 не встроена в исполняемый файл. Возраст Windows сам по себе этого не исправляет.
+
+В прежнем `build.rs` манифест встраивался только для MSVC. При сборке GNU/MinGW (`host: x86_64-pc-windows-gnu` в выводе `rustc -vV`) этот шаг пропускался. Теперь существующий `app.manifest` встраивается для обоих вариантов: флагами линковщика MSVC либо ресурсом COFF для GNU. Дополнительный `windres`/`rc.exe` и отдельный файл рядом с `.exe` не нужны. Манифест сохраняется после экспорта в `RinvaPlayer.exe`.
+
+Обновите исходники целиком, включая `Cargo.lock`, `crates/rinva-desktop/Cargo.toml`, `build.rs` и `app.manifest`, затем соберите заново обычной командой `cargo run --locked -p rinva-desktop`. Cargo пересоберёт изменившийся скрипт сборки; смена папки вывода InkCode не заменяет обновление исходников.
+
+Требование API: [GetWindowSubclass — Microsoft Learn](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-getwindowsubclass).
+
 ## Совместимость DPI
 
 Ранние выпуски Windows 10 не имеют `GetDpiForWindow` (появилась в 1607) или `SetProcessDpiAwarenessContext` (в документации функции указан выпуск 1703). Прежняя Rinva импортировала обе функции обязательно, поэтому на системе без одной из них окно не могло открыться.
@@ -37,7 +47,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\diagnose-startup.ps1 -Exec
 
 ## Что проверяется автоматически
 
-CI запускает MSVC `debug`-сборку через Cargo в `.inkcode/cargo/2`, проверяет встроенный манифест и все обычные импорты обеих сборок. Затем выполняется полный нативный smoke-тест `debug` с принудительным DPI fallback и обычный smoke-тест `release`.
+CI отдельно проверяет **MSVC и GNU/MinGW**. Для каждого варианта `debug` запускается через Cargo в `.inkcode/cargo/2`; проверяются встроенный манифест и все обычные импорты `debug` и `release`. Затем выполняются полный нативный smoke-тест `debug` с принудительным DPI fallback, обычный smoke-тест `release` и запуск экспортированного `RinvaPlayer.exe`.
+
+Артефакты MSVC: `rinva-windows-x64` и `native-smoke`. Артефакты GNU: `rinva-windows-x64-gnu` и `native-smoke-gnu`. В журнал CI записываются версия/host Rust и выбранный GNU-линковщик.
 
 Режим проверки fallback: `rinva.exe --smoke-test smoke-output --legacy-dpi`. Флаг действует только в smoke-тесте; в обычном редакторе выбор функции автоматический. Это проверяет запасной путь на Windows-runner, но не заменяет испытание на конкретной старой сборке Windows 10 или на компьютере пользователя.
 

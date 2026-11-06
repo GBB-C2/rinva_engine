@@ -2,7 +2,30 @@
 
 Снимки клиентской области настоящего Win32-приложения, созданные командой `rinva.exe --smoke-test smoke-output` на Windows в GitHub Actions. Используется синхронная отрисовка работающих окон через `WM_PRINT`. Изображения не являются макетами и не дорисованы.
 
-Версия исходников: [`cf9b145`](https://github.com/GBB-C2/rinva_engine/commit/cf9b145212c1166eaecb021ac7d8074d91ab9325). [Запуск проверок и исходные артефакты](https://github.com/GBB-C2/rinva_engine/actions/runs/42113858600).
+## Игровое меню и постановка сцены
+
+Версия новых снимков: [`fec00a7`](https://github.com/GBB-C2/rinva_engine/commit/fec00a740b608886953c3ddab03fc7190315779a). [Проверки и исходные артефакты](https://github.com/GBB-C2/rinva_engine/actions/runs/42241305539). Снимки редактора взяты из `smoke-output` сборки release GNU/MinGW (артефакт `native-smoke-gnu`); главное меню — из `smoke-player-output`, созданного отдельно экспортированным `RinvaPlayer.exe`.
+
+![Перемещение персонажа, угловые маркеры масштаба и сетка](stage-drag-ru.png)
+
+![Слоты с датой, сценой и миниатюрой](player-slots-ru.png)
+
+![Главное меню самостоятельной игры](standalone-title.png)
+
+| Файл | Экран |
+| --- | --- |
+| [stage-drag-ru.png](stage-drag-ru.png) | Постановка сцены, сетка 5% и порядок слоёв |
+| [stage-light.png](stage-light.png) | Холст и инспектор в светлой теме |
+| [player-menu-ru.png](player-menu-ru.png) | Пауза игры из редактора |
+| [player-slots-ru.png](player-slots-ru.png) | Шесть ручных слотов, быстрый слот и автосохранение |
+| [player-settings-ru.png](player-settings-ru.png) | Скорость текста, громкость, оформление и размер диалога |
+| [player-settings-ja-light.png](player-settings-ja-light.png) | Настройки на японском в светлой теме |
+| [player-dialogue-light.png](player-dialogue-light.png) | Светлое окно диалога и текст 150% |
+| [standalone-title.png](standalone-title.png) | Первый экран экспортированной игры |
+
+Геометрические персонажи — изображения для проверки движка. Инструкции по новым действиям находятся в [руководстве](../PLAYER_STAGE.md).
+
+Снимки прежних возможностей ниже относятся к версии [`cf9b145`](https://github.com/GBB-C2/rinva_engine/commit/cf9b145212c1166eaecb021ac7d8074d91ab9325): [проверки и исходные артефакты](https://github.com/GBB-C2/rinva_engine/actions/runs/42113858600).
 
 ## Studio: логика, звук, персонажи и чтение
 
