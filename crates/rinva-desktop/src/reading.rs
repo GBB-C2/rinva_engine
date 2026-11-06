@@ -5,12 +5,16 @@ use std::time::{Duration, Instant};
 #[serde(default)]
 pub struct ReadingSettings {
     pub speed: u32,
+    pub dialog_style: u8,
+    pub text_size: u8,
     pub volumes: [u8; 3],
 }
 impl Default for ReadingSettings {
     fn default() -> Self {
         Self {
             speed: 40,
+            dialog_style: 0,
+            text_size: 0,
             volumes: [75, 75, 100],
         }
     }

@@ -32,6 +32,7 @@ enum Command {
     Play(Request),
     Volumes([u8; 3]),
     Stop,
+    Pause(bool),
     Quit,
     Probe(mpsc::Sender<String>),
 }
@@ -77,6 +78,9 @@ impl Audio {
     }
     pub fn volumes(&self, volumes: [u8; 3]) {
         let _ = self.tx.send(Command::Volumes(volumes));
+    }
+    pub fn pause(&self, paused: bool) {
+        let _ = self.tx.send(Command::Pause(paused));
     }
     pub fn stop(&self) {
         self.voice_busy.store(false, Ordering::Relaxed);
@@ -207,7 +211,9 @@ fn worker(rx: mpsc::Receiver<Command>, errors: mpsc::Sender<String>, busy: Arc<A
     let mut voice: Option<Channel> = None;
     let mut effects: Vec<Channel> = vec![];
     let mut volumes = [80, 80, 100];
+    let mut paused_at: Option<Instant> = None;
     loop {
+        let mut pause_new = false;
         match rx.recv_timeout(Duration::from_millis(20)) {
             Ok(Command::Probe(reply)) => {
                 let _ = reply.send(format!(
@@ -228,7 +234,31 @@ fn worker(rx: mpsc::Receiver<Command>, errors: mpsc::Sender<String>, busy: Arc<A
                 ));
             }
             Ok(Command::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Ok(Command::Pause(paused)) => {
+                let elapsed = if paused {
+                    if paused_at.is_none() {
+                        paused_at = Some(Instant::now());
+                    }
+                    Duration::ZERO
+                } else {
+                    paused_at.take().map(|at| at.elapsed()).unwrap_or_default()
+                };
+                for c in music
+                    .iter_mut()
+                    .chain(fading.iter_mut())
+                    .chain(voice.iter_mut())
+                    .chain(effects.iter_mut())
+                {
+                    if paused {
+                        let _ = c.player.Pause();
+                    } else {
+                        c.fade_at += elapsed;
+                        let _ = c.player.Play();
+                    }
+                }
+            }
             Ok(Command::Stop) => {
+                paused_at = None;
                 music = None;
                 fading.clear();
                 voice = None;
@@ -236,6 +266,7 @@ fn worker(rx: mpsc::Receiver<Command>, errors: mpsc::Sender<String>, busy: Arc<A
             }
             Ok(Command::Volumes(value)) => volumes = value,
             Ok(Command::Play(request)) => {
+                pause_new = paused_at.is_some();
                 volumes = request.volumes;
                 let desired = request.music.as_ref().and_then(|m| {
                     match rinva_core::storage::resolve_asset(&request.root, &m.file) {
@@ -299,6 +330,19 @@ fn worker(rx: mpsc::Receiver<Command>, errors: mpsc::Sender<String>, busy: Arc<A
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+        if pause_new {
+            for c in music
+                .iter_mut()
+                .chain(fading.iter_mut())
+                .chain(voice.iter_mut())
+                .chain(effects.iter_mut())
+            {
+                let _ = c.player.Pause();
+            }
+        }
+        if paused_at.is_some() {
+            continue;
         }
         if let Some(c) = &mut music {
             c.tick(volumes[0]);

@@ -59,20 +59,29 @@ jobs:
           }
           if ($process.ExitCode -ne 0) { Get-Content smoke-debug-output/native-error.txt -ErrorAction SilentlyContinue; throw "Debug smoke failed: $($process.ExitCode)" }
           Get-Content smoke-debug-output/native-smoke.txt
+          Get-Content smoke-debug-output/player-stage.txt
           if (-not (Select-String -Path smoke-debug-output/native-trace.txt -Pattern 'DPI: monitor fallback' -Quiet)) { throw 'DPI fallback was not exercised' }
           if (Select-String -Path smoke-debug-output/native-trace.txt -Pattern 'RUNAWAY' -Quiet) { throw 'Debug message loop did not settle' }
       - name: Native smoke test
         shell: pwsh
         run: |
           $process = Start-Process -FilePath target/release/rinva.exe -ArgumentList '--smoke-test', 'smoke-output' -PassThru
-          if (-not $process.WaitForExit(90000)) {
+          if (-not $process.WaitForExit(150000)) {
             $process.Kill()
             Get-Content smoke-output/native-trace.txt -ErrorAction SilentlyContinue
             throw 'Native smoke test timed out'
           }
           if ($process.ExitCode -ne 0) { Get-Content smoke-output/native-error.txt -ErrorAction SilentlyContinue; throw "Native smoke failed: $($process.ExitCode)" }
           Get-Content smoke-output/native-smoke.txt
+          Get-Content smoke-output/player-stage.txt
           if (Select-String -Path smoke-output/native-trace.txt -Pattern 'RUNAWAY' -Quiet) { throw 'Native message loop did not settle' }
+      - name: Exported player startup
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath smoke-output/standalone/RinvaPlayer.exe -ArgumentList '--smoke-player', 'smoke-player-output' -PassThru
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Exported player timed out' }
+          if ($process.ExitCode -ne 0) { Get-Content smoke-player-output/native-error.txt -ErrorAction SilentlyContinue; throw "Exported player failed: $($process.ExitCode)" }
+          Get-Content smoke-player-output/native-player.txt
       - name: Package
         shell: pwsh
         run: |
@@ -89,6 +98,9 @@ jobs:
           path: |
             smoke-output
             smoke-debug-output
+            smoke-player-output
+            !smoke-output/standalone/**
+            !smoke-debug-output/standalone/**
           if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:

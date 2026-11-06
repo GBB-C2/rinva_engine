@@ -42,3 +42,7 @@ CI запускает MSVC `debug`-сборку через Cargo в `.inkcode/ca
 Режим проверки fallback: `rinva.exe --smoke-test smoke-output --legacy-dpi`. Флаг действует только в smoke-тесте; в обычном редакторе выбор функции автоматический. Это проверяет запасной путь на Windows-runner, но не заменяет испытание на конкретной старой сборке Windows 10 или на компьютере пользователя.
 
 Источники API: [GetDpiForWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getdpiforwindow), [SetProcessDpiAwarenessContext](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setprocessdpiawarenesscontext), [DPI через манифест](https://learn.microsoft.com/en-us/windows/win32/hidpi/setting-the-default-dpi-awareness-for-a-process).
+
+## Журнал нативного запуска
+
+Каждый обычный запуск создаёт небольшой локальный журнал в `%LOCALAPPDATA%/Rinva/logs/session-*.log`: вход в программу, готовность окна, нормальное закрытие или место Rust panic. Содержимое проекта в журнал не записывается. При сбое загрузчика до `main` новый журнал не появится; для него используйте проверку DLL выше. Журналы никуда не отправляются автоматически.
