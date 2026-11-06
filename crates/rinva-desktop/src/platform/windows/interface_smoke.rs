@@ -87,6 +87,40 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
     check(project() == fixture, "UI edit undo changed other nodes")?;
     command(hwnd, REDO);
     command(hwnd, UNDO);
+    // Renaming a variable updates UI bindings and mechanics in the same undo step.
+    SendMessageW(handle(studio::INSPECTOR), CB_SETCURSEL, 1, 0);
+    SendMessageW(
+        hwnd,
+        WM_COMMAND,
+        studio::INSPECTOR as usize | ((CBN_SELENDOK as usize) << 16),
+        0,
+    );
+    pump();
+    edit(studio::VAR_NAME, "tokens");
+    edit(studio::VAR_VALUE, "0");
+    command(hwnd, studio::VAR_UPDATE);
+    check(
+        project().scenes[3]
+            .ui
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("{tokens}"),
+        "Variable rename broke UI binding",
+    )?;
+    command(hwnd, UNDO);
+    check(
+        project() == fixture,
+        "Variable rename undo did not restore UI",
+    )?;
+    SendMessageW(handle(studio::INSPECTOR), CB_SETCURSEL, 5, 0);
+    SendMessageW(
+        hwnd,
+        WM_COMMAND,
+        studio::INSPECTOR as usize | ((CBN_SELENDOK as usize) << 16),
+        0,
+    );
+    pump();
     // Horizontal splitter commits only on mouse-up; Escape/capture loss restore it.
     let (scale, x, y) = APP.with(|s| {
         let s = s.borrow();

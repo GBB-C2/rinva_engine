@@ -219,8 +219,9 @@ impl Player {
     }
     pub fn advance(&mut self) -> Result<(), String> {
         if matches!(self.frame(), Frame::Dialogue { .. }) {
-            self.mark_read();
+            let key = self.line_key();
             self.transition(None)?;
+            self.read.insert(key);
         } else if let Frame::Screen { scene } = self.frame() {
             if let Some(next) = scene.next.clone() {
                 self.transition(Some(next))?;
@@ -316,6 +317,9 @@ impl Player {
             .iter()
             .filter_map(|p| {
                 let scene = self.project.scene(&p.scene)?;
+                if !scene.kind.interactive() {
+                    return None;
+                }
                 let line = scene.lines.get(p.line)?;
                 Some(if line.speaker.is_empty() {
                     line.text.clone()

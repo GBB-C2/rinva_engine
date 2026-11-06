@@ -82,9 +82,7 @@ pub unsafe fn layout(app: &App) {
     for id in LABEL..LABEL + 7 {
         app.controls.show(id, false);
     }
-    for id in BUTTON..BUTTON + LIMIT {
-        app.controls.show(id, false);
-    }
+    let mut buttons = 0;
     if IsWindowVisible(app.controls.get(CANVAS)) != 0 && app.game.page.is_none() && !app.reader.log
     {
         let mut rect: RECT = std::mem::zeroed();
@@ -92,19 +90,29 @@ pub unsafe fn layout(app: &App) {
         let f = crate::stage::Rect::frame(rect.right as f32, rect.bottom as f32);
         for (i, scene) in elements(app)
             .into_iter()
-            .filter(|s| s.kind == NodeKind::UiButton)
+            .filter(|s| s.kind == NodeKind::UiButton && s.ui.is_some())
             .take(LIMIT as usize)
             .enumerate()
         {
             if let Some(ui) = &scene.ui {
+                buttons += 1;
                 let id = BUTTON + i as u16;
                 let r = bounds(f, ui);
                 app.controls.text(id, &caption(app, ui));
-                app.controls
-                    .place(id, r.left, r.top, r.right - r.left, r.bottom - r.top, 1.);
+                app.controls.place(
+                    id,
+                    (r.left as f32 / app.scale).round() as i32,
+                    (r.top as f32 / app.scale).round() as i32,
+                    ((r.right - r.left) as f32 / app.scale).round() as i32,
+                    ((r.bottom - r.top) as f32 / app.scale).round() as i32,
+                    app.scale,
+                );
                 app.controls.show(id, true);
             }
         }
+    }
+    for id in BUTTON + buttons..BUTTON + LIMIT {
+        app.controls.show(id, false);
     }
     if app.player.is_some() || app.studio.pane != studio::Pane::Interface {
         return;
@@ -176,7 +184,7 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
         }
         let target = elements(app)
             .into_iter()
-            .filter(|s| s.kind == NodeKind::UiButton)
+            .filter(|s| s.kind == NodeKind::UiButton && s.ui.is_some())
             .nth((id - BUTTON) as usize)
             .map(|s| s.id.clone());
         if let Some(target) = target {
@@ -268,7 +276,26 @@ pub unsafe fn paint(app: &App, dc: HDC, rect: RECT) {
                 r,
                 app.palette.text,
                 app.resources.dialogue,
-                DT_WORDBREAK | DT_NOPREFIX,
+                DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS,
+            );
+        } else if scene.kind == NodeKind::UiButton {
+            // Thumbnail capture has no HWND children. Render the same button face;
+            // native child buttons supply input, hover and focus in the live view.
+            ui::rounded(
+                dc,
+                r,
+                app.palette.field,
+                app.palette.border,
+                (4. * app.scale) as i32,
+            );
+            InflateRect(&mut r, -(8. * app.scale) as i32, 0);
+            ui::text(
+                dc,
+                &caption(app, ui),
+                r,
+                app.palette.text,
+                app.resources.small,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
             );
         }
     }
