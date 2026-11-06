@@ -191,6 +191,11 @@ pub unsafe fn command(app: &mut App, id: u16, notification: u16) -> Result<bool,
             if let Some(player) = &mut app.player {
                 player.click(&target)?;
             } else {
+                app.graph.cancel();
+                app.graph.selected_port = None;
+                app.graph.selection.clear();
+                app.selected_item = 0;
+                app.choices_tab = false;
                 app.selected_scene = app
                     .document
                     .project
