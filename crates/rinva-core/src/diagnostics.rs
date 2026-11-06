@@ -82,6 +82,52 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
     }
     for scene in &project.scenes {
         let id = Some(scene.id.clone());
+        if scene.kind.ui_element() {
+            if let Some(ui) = &scene.ui {
+                if ui.width == 0
+                    || ui.height == 0
+                    || u16::from(ui.x) + u16::from(ui.width) > 100
+                    || u16::from(ui.y) + u16::from(ui.height) > 100
+                {
+                    error(
+                        id.clone(),
+                        Field::Interface,
+                        "Элемент интерфейса должен находиться внутри экрана (0…100%).".into(),
+                    );
+                }
+                if ui.text.chars().count() > 4000
+                    || (scene.kind != NodeKind::UiPanel && ui.text.trim().is_empty())
+                {
+                    error(
+                        id.clone(),
+                        Field::Interface,
+                        "Введите текст элемента интерфейса (до 4000 символов).".into(),
+                    );
+                }
+                if scene.kind == NodeKind::UiButton
+                    && ui.target.as_deref().is_none_or(|t| !index.contains_key(t))
+                {
+                    error(
+                        id.clone(),
+                        Field::Interface,
+                        "Соедините выход нажатия кнопки с существующей нодой.".into(),
+                    );
+                }
+            } else {
+                error(
+                    id.clone(),
+                    Field::Interface,
+                    "Настройте элемент интерфейса.".into(),
+                );
+            }
+        }
+        if (scene.kind.ui_element() || scene.kind == NodeKind::UiClear) && scene.next.is_none() {
+            error(
+                id.clone(),
+                Field::NextScene,
+                "Продолжите сборку интерфейса переходом к следующей ноде или экрану.".into(),
+            );
+        }
         if scene.kind == NodeKind::Condition && scene.condition.is_none() {
             error(id.clone(), Field::Logic, "Настройте условие.".into());
         }
@@ -309,6 +355,7 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
             };
             if scene.kind == NodeKind::Condition
                 || scene.kind == NodeKind::End
+                || scene.kind == NodeKind::UiScreen
                 || (scene.kind.interactive()
                     && (!scene.lines.is_empty() || !scene.choices.is_empty()))
             {
@@ -338,6 +385,9 @@ pub(crate) fn validate(project: &Project) -> Vec<Issue> {
             continue;
         }
         if let Some(scene) = index.get(id) {
+            if scene.kind == NodeKind::UiButton {
+                pending.extend(scene.ui.as_ref().and_then(|ui| ui.target.as_deref()));
+            }
             // Match playback: choices take precedence over automatic transitions.
             if scene.kind == NodeKind::End {
                 continue;

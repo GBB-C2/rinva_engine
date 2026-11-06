@@ -47,7 +47,9 @@ impl Record {
     pub fn capture(project: &Project, player: &Player, thumbnail: Vec<u8>) -> Self {
         let (scene, speaker) = match player.frame() {
             Frame::Dialogue { scene, line } => (scene, line.speaker.clone()),
-            Frame::Choices { scene, .. } | Frame::End { scene } => (scene, String::new()),
+            Frame::Choices { scene, .. } | Frame::Screen { scene } | Frame::End { scene } => {
+                (scene, String::new())
+            }
         };
         Self {
             version: 1,

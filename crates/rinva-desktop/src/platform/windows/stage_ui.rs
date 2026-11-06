@@ -20,7 +20,6 @@ pub struct Drag {
 }
 pub fn active(app: &App) -> bool {
     app.player.is_none()
-        && !app.graph_mode
         && app.navigation.mode.is_none()
         && app.studio.pane == studio::Pane::Characters
 }

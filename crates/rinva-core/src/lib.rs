@@ -19,5 +19,5 @@ pub use model::{
 pub use player::{Frame, Player, SaveGame};
 pub use story::{
     Assignment, AudioCue, Character, Comparison, Condition, Expression, MusicState, NodeKind,
-    Operation, Sprite,
+    Operation, Sprite, UiElement,
 };

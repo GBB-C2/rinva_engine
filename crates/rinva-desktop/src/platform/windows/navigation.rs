@@ -105,6 +105,7 @@ pub unsafe fn layout(app: &App, w: i32, h: i32) {
     }
     for id in [
         CANVAS,
+        GRAPH_CANVAS,
         TAB_LINES,
         TAB_CHOICES,
         ITEMS,
@@ -159,6 +160,7 @@ fn field_name(app: &App, field: Field) -> String {
         Field::Logic => app.t("Логика").into(),
         Field::Audio => app.t("Звук").into(),
         Field::Characters => app.t("Персонажи").into(),
+        Field::Interface => app.t("Интерфейс").into(),
     }
 }
 fn location(app: &App, key: &Key) -> String {
@@ -409,7 +411,10 @@ unsafe fn update_detail(app: &App) {
 pub unsafe fn open(app: &mut App, mode: Mode) {
     app.document.finish_edit();
     app.graph.cancel();
-    if GetCapture() == app.controls.get(CANVAS) {
+    if [CANVAS, GRAPH_CANVAS]
+        .iter()
+        .any(|id| GetCapture() == app.controls.get(*id))
+    {
         ReleaseCapture();
     }
     if app.navigation.mode.is_none() {
@@ -507,6 +512,10 @@ unsafe fn activate(app: &mut App, leave: bool) {
         Field::NextScene => NEXT_SCENE,
         Field::Background => BACKGROUND,
         Field::Portrait => PORTRAIT,
+        Field::Interface => {
+            app.studio.pane = studio::Pane::Interface;
+            interface_ui::TEXT
+        }
         Field::Logic => {
             app.studio.pane = studio::Pane::Logic;
             studio::KIND
@@ -532,7 +541,7 @@ unsafe fn activate(app: &mut App, leave: bool) {
                 size.x / 2. - (p.x + graph::NODE_WIDTH / 2.) * app.graph.zoom,
                 size.y / 2. - (p.y + graph::height(app.scene()) / 2.) * app.graph.zoom,
             );
-            InvalidateRect(app.controls.get(CANVAS), null(), 0);
+            InvalidateRect(app.controls.get(GRAPH_CANVAS), null(), 0);
         }
         let handle = app.controls.get(control);
         SetFocus(handle);

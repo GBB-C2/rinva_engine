@@ -163,7 +163,7 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         "Cancelling language popup committed a language",
     )?;
     smoke_trace("node gestures");
-    let canvas = handle(CANVAS);
+    let canvas = handle(GRAPH_CANVAS);
     let start = node_point(0, None);
     pointer(canvas, WM_LBUTTONDOWN, start);
     pointer(

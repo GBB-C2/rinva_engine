@@ -2,6 +2,8 @@ mod audio;
 mod dpi;
 mod fonts;
 mod game_ui;
+mod interface_smoke;
+mod interface_ui;
 mod navigation;
 mod navigation_smoke;
 mod nodes;
@@ -80,6 +82,7 @@ const UP: u16 = 406;
 const DOWN: u16 = 407;
 const PREVIEW_SCENE: u16 = 408;
 const CANVAS: u16 = 500;
+const GRAPH_CANVAS: u16 = 502;
 const STATUS: u16 = 501;
 const BACK: u16 = 601;
 const ADVANCE: u16 = 602;
@@ -193,6 +196,11 @@ struct Settings {
     left_width: i32,
     #[serde(default = "default_right")]
     right_width: i32,
+    #[serde(default = "default_preview_share")]
+    preview_share: i32,
+}
+fn default_preview_share() -> i32 {
+    45
 }
 fn default_left() -> i32 {
     224
@@ -219,7 +227,8 @@ struct App {
     audio: audio::Audio,
     left_width: i32,
     right_width: i32,
-    splitter: Option<(bool, i32, i32)>,
+    preview_share: i32,
+    splitter: Option<splitters::Drag>,
     document: Document,
     file: Option<PathBuf>,
     asset_root: PathBuf,
@@ -288,6 +297,7 @@ impl App {
                 reading: crate::reading::ReadingSettings::default(),
                 left_width: 224,
                 right_width: 300,
+                preview_share: 45,
             });
         let dark = settings.dark;
         let language = settings.language;
@@ -321,6 +331,20 @@ impl App {
             WS_TABSTOP,
             font,
         )?;
+        controls.add(
+            hwnd,
+            GRAPH_CANVAS,
+            "RinvaCanvas",
+            language.text("Ноды"),
+            WS_TABSTOP,
+            font,
+        )?;
+        SetWindowLongPtrW(
+            controls.get(CANVAS),
+            GWL_EXSTYLE,
+            WS_EX_CONTROLPARENT as isize,
+        );
+        interface_ui::create(&mut controls, hwnd, &resources)?;
         navigation::create(&mut controls, hwnd, &resources)?;
         studio::create(&mut controls, hwnd, &resources)?;
         reader_ui::create(&mut controls, hwnd, &resources)?;
@@ -347,7 +371,7 @@ impl App {
             dark,
             language,
             graph: Graph::default(),
-            graph_mode: false,
+            graph_mode: true,
             navigation: navigation::Navigation::default(),
             studio: studio::Studio::default(),
             stage: stage_ui::Stage::default(),
@@ -356,6 +380,7 @@ impl App {
             audio: audio::Audio::new(),
             left_width: settings.left_width.clamp(180, 300),
             right_width: settings.right_width.clamp(280, 420),
+            preview_share: settings.preview_share.clamp(25, 65),
             splitter: None,
             document: Document::new(project),
             file,
@@ -395,6 +420,7 @@ impl App {
                 reading: self.reader.settings.clone(),
                 left_width: self.left_width,
                 right_width: self.right_width,
+                preview_share: self.preview_share,
             },
         )
     }
@@ -516,7 +542,14 @@ impl App {
         (center, right, right - center - 16, right_width - 32)
     }
 
+    fn preview_height(&self, h: i32) -> i32 {
+        ((h - 280) * self.preview_share / 100).clamp(160, (h - 430).max(160))
+    }
+
     unsafe fn layout(&self) {
+        let focused = GetFocus();
+        let restore_button = (interface_ui::BUTTON..interface_ui::BUTTON + 64)
+            .contains(&(GetDlgCtrlID(focused) as u16));
         let mut rect: RECT = std::mem::zeroed();
         GetClientRect(self.hwnd, &mut rect);
         let w = (rect.right as f32 / self.scale) as i32;
@@ -548,6 +581,7 @@ impl App {
             let _ = handle;
         }
         for id in [
+            GRAPH_CANVAS,
             GRAPH_FIT,
             GRAPH_ARRANGE,
             GRAPH_UNLINK,
@@ -603,7 +637,11 @@ impl App {
                 32,
             );
             let (center, right, cw, iw) = self.panel_geometry(w);
-            let preview_h = (cw * 9 / 16).min(h - 360).max(180);
+            let preview_h = if self.graph_mode {
+                self.preview_height(h)
+            } else {
+                (cw * 9 / 16).min(h - 360).max(180)
+            };
             place(VIEW_PREVIEW, center, 84, 112, 28);
             place(VIEW_NODES, center + 120, 84, 78, 28);
             place(navigation::SEARCH, center + 206, 84, 78, 28);
@@ -643,7 +681,11 @@ impl App {
                 place(BODY, right + 16, 376, 268, h - 510);
             }
             if self.graph_mode {
-                place(CANVAS, center, 156, cw, h - 246);
+                let graph_top = 120 + preview_h + 48;
+                place(GRAPH_CANVAS, center, graph_top, cw, h - graph_top - 90);
+                place(ZOOM_OUT, center, graph_top - 36, 30, 28);
+                place(ZOOM_LABEL, center + 36, graph_top - 30, 58, 20);
+                place(ZOOM_IN, center + 94, graph_top - 36, 30, 28);
                 for id in [TAB_LINES, TAB_CHOICES, ITEMS, DELETE_ITEM, UP, DOWN] {
                     self.controls.show(id, false);
                 }
@@ -660,6 +702,10 @@ impl App {
         reader_ui::layout(self, w, h);
         stage_ui::layout(self, w, h);
         game_ui::layout(self, w, h);
+        interface_ui::layout(self);
+        if restore_button && IsWindowVisible(focused) != 0 {
+            SetFocus(focused);
+        }
         for id in [SCENES, ITEMS, GAME_CHOICES] {
             SendMessageW(
                 self.controls.get(id),
@@ -676,11 +722,12 @@ impl App {
         );
         self.controls.sync_scrolls();
         InvalidateRect(self.controls.get(CANVAS), null(), 0);
+        InvalidateRect(self.controls.get(GRAPH_CANVAS), null(), 0);
     }
 
     unsafe fn canvas_size(&self) -> Point {
         let mut r: RECT = std::mem::zeroed();
-        GetClientRect(self.controls.get(CANVAS), &mut r);
+        GetClientRect(self.controls.get(GRAPH_CANVAS), &mut r);
         Point::new(r.right as f32 / self.scale, r.bottom as f32 / self.scale)
     }
     unsafe fn fit_graph(&mut self) {
@@ -721,17 +768,14 @@ impl App {
             CANVAS,
             &format!(
                 "{} — {}",
-                self.t(if self.graph_mode {
-                    "Ноды"
-                } else {
-                    "Предпросмотр"
-                }),
+                self.t("Предпросмотр"),
                 self.document.project.scenes[self
                     .selected_scene
                     .min(self.document.project.scenes.len() - 1)]
                 .name
             ),
         );
+        self.controls.text(GRAPH_CANVAS, self.t("Ноды"));
         self.selected_scene = self
             .selected_scene
             .min(self.document.project.scenes.len() - 1);
@@ -936,6 +980,7 @@ impl App {
                     choices.iter().map(|c| c.text.clone()).collect(),
                     "Выбрать · Enter",
                 ),
+                Frame::Screen { .. } => (String::new(), vec![], "Далее · Enter"),
                 Frame::End { .. } => (
                     self.t("Конец истории. Спасибо за чтение.").into(),
                     vec![],
@@ -953,6 +998,10 @@ impl App {
             self.controls
                 .fill_list(GAME_CHOICES, &choices, selection, false);
             self.controls.text(ADVANCE, self.t(label));
+            self.controls.enable(
+                ADVANCE,
+                !matches!(player.frame(), Frame::Screen { scene } if scene.next.is_none()),
+            );
         }
         self.controls.text(
             ADD_ITEM,
@@ -966,6 +1015,7 @@ impl App {
         self.update_title();
         navigation::refresh(self);
         studio::refresh(self);
+        interface_ui::refresh(self);
         reader_ui::refresh(self);
         game_ui::refresh(self);
         self.layout();
@@ -990,6 +1040,7 @@ impl App {
         self.controls
             .text(STATUS, &self.language.message(&self.status));
         InvalidateRect(self.controls.get(CANVAS), null(), 0);
+        InvalidateRect(self.controls.get(GRAPH_CANVAS), null(), 0);
     }
 
     unsafe fn load_images(&mut self) {
@@ -997,6 +1048,7 @@ impl App {
             let scene = match player.frame() {
                 Frame::Dialogue { scene, .. }
                 | Frame::Choices { scene, .. }
+                | Frame::Screen { scene }
                 | Frame::End { scene } => scene,
             };
             (
@@ -1181,7 +1233,10 @@ impl App {
         {
             return Ok(());
         }
-        if studio::command(self, id, notification)? || reader_ui::command(self, id, notification)? {
+        if interface_ui::command(self, id, notification)?
+            || studio::command(self, id, notification)?
+            || reader_ui::command(self, id, notification)?
+        {
             return Ok(());
         }
         if navigation::command(self, id, notification) {
@@ -1218,7 +1273,7 @@ impl App {
             }
         }
         self.graph.cancel();
-        if GetCapture() == self.controls.get(CANVAS) {
+        if GetCapture() == self.controls.get(GRAPH_CANVAS) {
             ReleaseCapture();
         }
         self.document.finish_edit();
@@ -1599,7 +1654,7 @@ impl App {
                 }
                 if let Some(player) = &mut self.player {
                     match player.frame() {
-                        Frame::Dialogue { .. } => player.advance()?,
+                        Frame::Dialogue { .. } | Frame::Screen { .. } => player.advance()?,
                         Frame::Choices { .. } => player
                             .choose(self.controls.selection(GAME_CHOICES, false).unwrap_or(0))?,
                         Frame::End { .. } => *player = Player::new(&self.document.project)?,
@@ -1776,10 +1831,6 @@ impl App {
     }
 
     unsafe fn paint_canvas(&self, dc: HDC, rect: RECT) {
-        if self.graph_mode && self.player.is_none() {
-            nodes::paint(self, dc, rect);
-            return;
-        }
         let (scene, speaker, text, ended) = if let Some(player) = &self.player {
             match player.frame() {
                 Frame::Dialogue { scene, line } => (
@@ -1790,6 +1841,7 @@ impl App {
                 ),
                 Frame::Choices { scene, .. } => (scene, "", self.t("Выберите ответ ниже"), false),
                 Frame::End { scene } => (scene, "", "", true),
+                Frame::Screen { scene } => (scene, "", "", false),
             }
         } else {
             let scene = self.scene();
@@ -1823,7 +1875,7 @@ impl App {
                 portrait: self.portrait.as_ref(),
                 sprites: &self.sprites,
                 dialog_style: self.reader.settings.dialog_style,
-                show_dialog: !stage_ui::active(self),
+                show_dialog: !stage_ui::active(self) && !scene.kind.interface(),
                 ended,
                 end_text: self.t("Конец истории"),
             },
@@ -1831,6 +1883,7 @@ impl App {
             self.resources.dialogue,
             self.resources.small,
         );
+        interface_ui::paint(self, dc, rect);
         stage_ui::paint(self, dc, rect);
     }
 
@@ -1892,18 +1945,31 @@ impl App {
             },
             (4. * self.scale).round() as i32,
         );
-        let value = if draw.CtlType == ODT_LISTBOX {
+        let value = if draw.CtlType == ODT_LISTBOX || draw.CtlType == ODT_COMBOBOX {
             if draw.itemID == u32::MAX {
                 return;
             }
-            let n = SendMessageW(draw.hwndItem, LB_GETTEXTLEN, draw.itemID as usize, 0);
+            let n = SendMessageW(
+                draw.hwndItem,
+                if draw.CtlType == ODT_COMBOBOX {
+                    CB_GETLBTEXTLEN
+                } else {
+                    LB_GETTEXTLEN
+                },
+                draw.itemID as usize,
+                0,
+            );
             if n < 0 {
                 return;
             }
             let mut buffer = vec![0u16; n as usize + 1];
             SendMessageW(
                 draw.hwndItem,
-                LB_GETTEXT,
+                if draw.CtlType == ODT_COMBOBOX {
+                    CB_GETLBTEXT
+                } else {
+                    LB_GETTEXT
+                },
                 draw.itemID as usize,
                 buffer.as_mut_ptr() as isize,
             );
@@ -1960,7 +2026,7 @@ impl App {
             } else {
                 self.palette.text
             },
-            if draw.CtlType == ODT_LISTBOX || primary {
+            if matches!(draw.CtlType, ODT_LISTBOX | ODT_COMBOBOX) || primary {
                 self.resources.font
             } else {
                 self.resources.small
@@ -1968,7 +2034,7 @@ impl App {
             DT_VCENTER
                 | DT_SINGLELINE
                 | DT_END_ELLIPSIS
-                | if draw.CtlType == ODT_LISTBOX {
+                | if matches!(draw.CtlType, ODT_LISTBOX | ODT_COMBOBOX) {
                     DT_LEFT
                 } else {
                     DT_CENTER
@@ -2120,6 +2186,14 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
             });
             if msg == WM_PAINT {
                 EndPaint(hwnd, &paint);
+            }
+            0
+        }
+        WM_MEASUREITEM => {
+            let measure = &mut *(l as *mut MEASUREITEMSTRUCT);
+            if measure.CtlType == ODT_COMBOBOX {
+                measure.itemHeight = (28. * dpi::for_window(hwnd) as f32 / 96.) as u32;
+                return 1;
             }
             0
         }
@@ -2281,6 +2355,9 @@ unsafe fn dispatch(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
 
 unsafe extern "system" fn canvas_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     std::panic::catch_unwind(|| {
+        if matches!(msg, WM_DRAWITEM | WM_COMMAND) {
+            return SendMessageW(GetParent(hwnd), msg, w, l);
+        }
         if msg == WM_GETDLGCODE {
             return APP.with(|slot| {
                 if slot
@@ -2308,8 +2385,10 @@ unsafe extern "system" fn canvas_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
             let handled = APP.with(|slot| {
                 if let Ok(mut slot) = slot.try_borrow_mut() {
                     if let Some(app) = slot.as_mut() {
-                        return stage_ui::event(app, hwnd, msg, w, l)
-                            || nodes::input_event(app, hwnd, msg, w, l);
+                        if hwnd == app.controls.get(GRAPH_CANVAS) {
+                            return nodes::input_event(app, hwnd, msg, w, l);
+                        }
+                        return stage_ui::event(app, hwnd, msg, w, l);
                     }
                 }
                 false
@@ -2336,7 +2415,11 @@ unsafe extern "system" fn canvas_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM
             APP.with(|slot| {
                 if let Ok(slot) = slot.try_borrow() {
                     if let Some(app) = slot.as_ref() {
-                        app.paint_canvas(memory, rect);
+                        if hwnd == app.controls.get(GRAPH_CANVAS) {
+                            nodes::paint(app, memory, rect);
+                        } else {
+                            app.paint_canvas(memory, rect);
+                        }
                     }
                 }
             });
@@ -2742,6 +2825,7 @@ unsafe fn smoke_test(hwnd: HWND, output: &Path) -> Result<(), String> {
     navigation_smoke::run(hwnd, output)?;
     studio_smoke::run(hwnd, output)?;
     player_stage_smoke::run(hwnd, output)?;
+    interface_smoke::run(hwnd, output)?;
     let original_dark = APP.with(|slot| slot.borrow().as_ref().unwrap().dark);
     if !original_dark {
         command(THEME);

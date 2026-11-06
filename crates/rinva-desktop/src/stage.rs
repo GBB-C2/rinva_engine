@@ -45,8 +45,8 @@ pub fn translate(origin: &Sprite, frame: Rect, dx: f32, dy: f32, snap: bool) -> 
             value.round()
         }
     };
-    next.x = quantize(origin.x as f32 + dx / frame.w * 100.).clamp(-100., 200.) as i32;
-    next.y = quantize(origin.y as f32 + dy / frame.h * 100.).clamp(-100., 200.) as i32;
+    next.x = quantize(origin.x as f32 + dx / frame.w * 100.).clamp(-50., 150.) as i32;
+    next.y = quantize(origin.y as f32 + dy / frame.h * 100.).clamp(-50., 150.) as i32;
     next
 }
 pub fn resize(origin: &Sprite, anchor: (f32, f32), start: (f32, f32), at: (f32, f32)) -> Sprite {
@@ -79,7 +79,7 @@ mod tests {
         let s = Sprite::new("c".into(), "e".into());
         let f = Rect::frame(1600., 900.);
         assert_eq!(translate(&s, f, 47., 0., true).x, 55);
-        assert_eq!(translate(&s, f, 16000., -16000., false).x, 200);
+        assert_eq!(translate(&s, f, 16000., -16000., false).x, 150);
         let bigger = resize(&s, (800., 900.), (1000., 500.), (1100., 300.));
         assert_eq!(bigger.scale, 150);
         assert_eq!((bigger.x, bigger.y), (s.x, s.y));
