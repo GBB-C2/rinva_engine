@@ -8,6 +8,10 @@
 
 Настоящие снимки Win32-приложения из автоматизированного запуска на Windows. В демонстрации фон ещё не импортирован; свои изображения можно добавить кнопкой «Выбрать фон».
 
+![Нейтральный интерфейс: предпросмотр сверху, ноды снизу](docs/screenshots/node-workspace-dark.png)
+
+[Светлая тема](docs/screenshots/node-workspace-light.png) · [Меню, собранное нодами](docs/screenshots/node-interface-player.png) · [Маленькое окно на японском](docs/screenshots/node-workspace-small-ja.png)
+
 ![Постановка сцены: перемещение, масштаб, сетка и слои](docs/screenshots/stage-drag-ru.png)
 
 [Меню самостоятельной игры](docs/screenshots/standalone-title.png) · [Слоты с миниатюрами](docs/screenshots/player-slots-ru.png) · [Настройки на японском](docs/screenshots/player-settings-ja-light.png) · [Светлый диалог, текст 150%](docs/screenshots/player-dialogue-light.png)

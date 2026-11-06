@@ -2,9 +2,26 @@
 
 Снимки клиентской области настоящего Win32-приложения, созданные командой `rinva.exe --smoke-test smoke-output` на Windows в GitHub Actions. Используется синхронная отрисовка работающих окон через `WM_PRINT`. Изображения не являются макетами и не дорисованы.
 
-## Игровое меню и постановка сцены
+## Нейтральная палитра и нодовый интерфейс
 
-Версия новых снимков: [`fec00a7`](https://github.com/GBB-C2/rinva_engine/commit/fec00a740b608886953c3ddab03fc7190315779a). [Проверки и исходные артефакты](https://github.com/GBB-C2/rinva_engine/actions/runs/42241305539). Снимки редактора взяты из `smoke-output` сборки release GNU/MinGW (артефакт `native-smoke-gnu`); главное меню — из `smoke-player-output`, созданного отдельно экспортированным `RinvaPlayer.exe`.
+Все снимки в этой папке обновлены из версии [`d152ee5`](https://github.com/GBB-C2/rinva_engine/commit/d152ee5c2c23d95b9f01581efb854c7d317d602a). [Проверки и оригинальные артефакты](https://github.com/GBB-C2/rinva_engine/actions/runs/42268146022). Редактор снят в release GNU/MinGW (`native-smoke-gnu`, каталог `smoke-output`); главное меню самостоятельной игры — в `smoke-player-output`.
+
+![Предпросмотр сверху, ноды снизу и инспектор кнопки](node-workspace-dark.png)
+
+![То же рабочее пространство в светлой теме](node-workspace-light.png)
+
+![Работающее меню, созданное через ноды](node-interface-player.png)
+
+| Файл | Экран |
+| --- | --- |
+| [node-workspace-dark.png](node-workspace-dark.png) | Предпросмотр меню, граф диалогов/механик/UI и параметры кнопки |
+| [node-workspace-light.png](node-workspace-light.png) | Нейтральная светлая тема, те же связи и координаты |
+| [node-interface-player.png](node-interface-player.png) | Кнопка увеличила переменную, меню пересобрано, счётчик обновлён |
+| [node-workspace-small-ja.png](node-workspace-small-ja.png) | Японский интерфейс при минимальном размере окна 1120×760 |
+
+Подписи нод при обычном масштабе показывают тип и выходы; при уменьшении ниже 40% остаются название и порты. Справа текст самой истории остаётся русским: язык редактора не меняет авторский сценарий. [Пример меню](../../examples/node-ui.rinva) и [инструкция](../NODES.md).
+
+## Игровое меню и постановка сцены
 
 ![Перемещение персонажа, угловые маркеры масштаба и сетка](stage-drag-ru.png)
 
@@ -24,8 +41,6 @@
 | [standalone-title.png](standalone-title.png) | Первый экран экспортированной игры |
 
 Геометрические персонажи — изображения для проверки движка. Инструкции по новым действиям находятся в [руководстве](../PLAYER_STAGE.md).
-
-Снимки прежних возможностей ниже относятся к версии [`cf9b145`](https://github.com/GBB-C2/rinva_engine/commit/cf9b145212c1166eaecb021ac7d8074d91ab9325): [проверки и исходные артефакты](https://github.com/GBB-C2/rinva_engine/actions/runs/42113858600).
 
 ## Studio: логика, звук, персонажи и чтение
 

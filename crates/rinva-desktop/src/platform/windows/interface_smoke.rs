@@ -98,6 +98,27 @@ pub unsafe fn run(hwnd: HWND, output: &Path) -> Result<(), String> {
         a.refresh();
         Ok::<_, String>(())
     })?;
+    // Selecting a button in the preview must not leave another node's output active.
+    APP.with(|s| {
+        let mut s = s.borrow_mut();
+        let a = s.as_mut().unwrap();
+        a.graph.selected_port = Some((4, Port::Click));
+        a.graph.selection.insert("start".into());
+    });
+    SendMessageW(handle(interface_ui::BUTTON + 1), BM_CLICK, 0, 0);
+    pump();
+    check(
+        APP.with(|s| {
+            let s = s.borrow();
+            let a = s.as_ref().unwrap();
+            a.selected_scene == 5 && a.graph.selected_port.is_none() && a.graph.selection.is_empty()
+        }),
+        "Preview selection retained another node's graph connection",
+    )?;
+    check(
+        project() == fixture,
+        "Selecting a preview button changed the story",
+    )?;
     // Editing is one undoable transaction, and the native label refreshes immediately.
     edit(interface_ui::TEXT, "Получить монету · 海");
     command(hwnd, interface_ui::APPLY);
